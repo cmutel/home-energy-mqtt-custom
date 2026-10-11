@@ -22,14 +22,19 @@ class Heater:
     board: Board
     bus: str            # I2C bus on the board ("1" or "2")
     colour: Colour
+    # Water heaters have their own thermostat: a closed relay only means they
+    # *may* draw power, so they're left out of "test all".
+    water: bool = False
 
 
 HEATERS: tuple[Heater, ...] = (
-    Heater("upstairs_water", "Upstairs water heater", "upstairs water", "upstairs", "1", "blue"),
+    Heater("upstairs_water", "Upstairs water heater", "upstairs water", "upstairs", "1", "blue",
+           water=True),
     Heater("upstairs_guest", "Guest room / Matvei", "upstairs guest/matvei", "upstairs", "1", "red"),
     Heater("upstairs_alpha", "Upstairs alpha (corridor)", "upstairs alpha", "upstairs", "1", "green"),
     Heater("upstairs_beta", "Upstairs beta (Direktheizung)", "upstairs beta", "upstairs", "1", "yellow"),
-    Heater("downstairs_water", "Downstairs water heater", "downstairs water", "downstairs", "2", "blue"),
+    Heater("downstairs_water", "Downstairs water heater", "downstairs water", "downstairs", "2", "blue",
+           water=True),
     Heater("living_room", "Entrance & living room", "downstairs living room", "downstairs", "1", "red"),
     Heater("corridor_1st_floor", "Corridor 1st floor", "downstairs corridor 1st floor",
            "downstairs", "1", "green"),

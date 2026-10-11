@@ -9,6 +9,10 @@ other heater switched shortly before or after. These track slow changes, e.g.
 when radiators on a circuit are turned off by hand, and trigger a drift alert
 when they disagree with the last active test.
 
+A test that sees no load (thermostat satisfied, radiators turned off by hand,
+or a water heater with a hot tank) is stored as method "no load" and never
+used as an estimate: it says nothing about the heater's power.
+
 Grid power is positive when exporting, so switching a heater on makes it fall.
 """
 
@@ -20,6 +24,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from dorfsteig_control.heaters import BY_ID
 
 if TYPE_CHECKING:
     from dorfsteig_control.service import Controller
@@ -38,12 +44,13 @@ MEASURE_S = 45
 PASSIVE_BEFORE = (-35, -5)
 PASSIVE_AFTER = (30, 75)
 PASSIVE_MIN_SAMPLES = 5
+NO_LOAD_W = 100    # below this a toggle shows nothing measurable
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS heater_power (
     ts           REAL NOT NULL,      -- when the heater was toggled
     heater       TEXT NOT NULL,
-    method       TEXT NOT NULL,      -- "active" or "passive"
+    method       TEXT NOT NULL,      -- "active", "passive" or "no load"
     watts        REAL NOT NULL,
     spread       REAL,               -- W, noise in the grid readings
     window_end   REAL,               -- end of the measurement, for matching IoTaWatt zones
@@ -205,12 +212,18 @@ async def run_test(controller: "Controller", heater: str) -> TestStatus:
         # Heater on → more consumption → grid power (export positive) falls
         watts = (baseline.median - during.median) if not was_on else (during.median - baseline.median)
         spread = max(baseline.spread, during.spread)
-        if watts < 100:
-            status.note = "No load detected: thermostat satisfied, or heaters on this circuit turned off?"
+        method = "active"
+        if watts < NO_LOAD_W:
+            method = "no load"
+            if BY_ID[heater].water:
+                status.note = ("No load: the tank is probably already hot. "
+                               "Repeat after hot water has been used.")
+            else:
+                status.note = "No load: thermostat satisfied, or radiators on this circuit turned off?"
         elif spread > 0.25 * watts:
             status.note = "Noisy readings (other appliances?); consider repeating"
-        status.result = watts
-        record(controller.store.conn, toggled_at, heater, "active", watts, spread, end, status.note)
+        status.result = watts if method == "active" else None
+        record(controller.store.conn, toggled_at, heater, method, watts, spread, end, status.note)
         log.info("Wattage test %s: %.0f W (spread %.0f W) %s", heater, watts, spread, status.note)
         return status
     finally:
@@ -248,7 +261,7 @@ def evaluate_passive(
         return None
     watts = (before.median - after.median) if pending.on else (after.median - before.median)
     spread = max(before.spread, after.spread)
-    if watts < 100 or spread > 0.25 * watts:
+    if watts < NO_LOAD_W or spread > 0.25 * watts:
         return None
     return watts, spread
 

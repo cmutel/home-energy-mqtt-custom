@@ -63,7 +63,10 @@ def test_zone_match(tmp_path: Path):
     assert wattage.zone_match(conn, 240, 480) == ("zone_c", 1950)
 
 
-def test_active_test(tmp_path: Path, monkeypatch):
+def run_fake_test(
+    tmp_path: Path, monkeypatch, heater: str, draw: float
+) -> tuple[Controller, wattage.TestStatus]:
+    """Run an active test against a grid that drops by `draw` W while `heater` is on."""
     for name in ("SETTLE_S", "BASELINE_S", "SWITCH_WAIT_S", "MEASURE_S"):
         monkeypatch.setattr(wattage, name, 0.3)
     monkeypatch.setattr(wattage, "PASSIVE_MIN_SAMPLES", 2)
@@ -72,20 +75,34 @@ def test_active_test(tmp_path: Path, monkeypatch):
     controller.tick(datetime.now())
 
     async def feed():
-        # Grid follows the heater: 1500 W export when off, 1500 - 1800 when on
         while True:
-            on = controller.states["kids_bedroom"].on
-            controller.on_grid_power(-300.0 if on else 1500.0)
+            on = controller.states[heater].on
+            controller.on_grid_power(1500.0 - (draw if on else 0.0))
             await asyncio.sleep(0.02)
 
     async def main():
         feeder = asyncio.create_task(feed())
-        status = await wattage.run_test(controller, "kids_bedroom")
+        status = await wattage.run_test(controller, heater)
         feeder.cancel()
         return status
 
-    status = asyncio.run(main())
+    return controller, asyncio.run(main())
+
+
+def test_active_test(tmp_path: Path, monkeypatch):
+    controller, status = run_fake_test(tmp_path, monkeypatch, "kids_bedroom", 1800)
     assert status.result == pytest.approx(1800)
     assert not controller.states["kids_bedroom"].on   # restored
     assert controller.overrides == {} and not controller.hold_solar
     assert wattage.estimated_watts(controller.store.conn, "kids_bedroom") == (1800, "test")
+
+
+def test_no_load_is_not_used_as_estimate(tmp_path: Path, monkeypatch):
+    # Water heater relay is on by default, but the tank is hot: toggling changes nothing
+    controller, status = run_fake_test(tmp_path, monkeypatch, "downstairs_water", 0)
+    assert status.result is None
+    assert "tank" in status.note
+    assert controller.states["downstairs_water"].on   # restored
+    conn = controller.store.conn
+    assert [m["method"] for m in wattage.measurements(conn)] == ["no load"]
+    assert wattage.estimated_watts(conn, "downstairs_water") == (2000.0, "default")

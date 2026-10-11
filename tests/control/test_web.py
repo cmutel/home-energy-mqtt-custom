@@ -93,3 +93,14 @@ def test_locked_with_legacy_config(tmp_path: Path):
     client = TestClient(create_app(controller), follow_redirects=False)
     r = client.post("/heating/boost", data={"heater": "living_room", "hours": "1"})
     assert "error=" in r.headers["location"]
+
+
+def test_test_all_skips_water_heaters(setup, monkeypatch):
+    controller, client = setup
+    started = []
+    monkeypatch.setattr(controller, "start_tests", started.extend)
+    r = client.post("/heating/wattage/test", data={"heater": "all"})
+    assert r.status_code == 303
+    assert len(started) == 10 and not any("water" in h for h in started)
+    client.post("/heating/wattage/test", data={"heater": "upstairs_water"})
+    assert started[-1] == "upstairs_water"   # still testable on its own

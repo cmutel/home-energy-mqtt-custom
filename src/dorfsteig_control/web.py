@@ -271,11 +271,13 @@ def create_app(controller: Controller) -> FastAPI:
         for row in rows:
             active = row["method"] == "active"
             row["zone"] = wattage.zone_match(conn, row["ts"], row["window_end"]) if active else None
+        room_heaters = sum(not h.water for h in HEATERS)
         return {
             "estimates": {h.id: wattage.estimated_watts(conn, h.id) for h in HEATERS},
             "measurements": rows,
             "test": controller.test,
             "running": controller.test_running,
+            "all_minutes": round(room_heaters * 3.05),
         }
 
     @app.get(f"{PREFIX}/wattage", response_class=HTMLResponse)
@@ -288,12 +290,12 @@ def create_app(controller: Controller) -> FastAPI:
 
     @app.post(f"{PREFIX}/wattage/test")
     async def wattage_test(heater: str = Form()) -> RedirectResponse:
-        heaters = [h.id for h in HEATERS] if heater == "all" else [heater]
+        heaters = [h.id for h in HEATERS if not h.water] if heater == "all" else [heater]
         try:
             controller.start_tests(heaters)
         except RuntimeError as e:
             return back("/wattage", error=str(e))
-        return back("/wattage", msg="Test started; it takes about 3 minutes per heater")
+        return back("/wattage", msg=f"Testing {len(heaters)} heater(s); about 3 minutes each")
 
     @app.post(f"{PREFIX}/wattage/cancel")
     async def wattage_cancel() -> RedirectResponse:

@@ -73,10 +73,16 @@ def test_daily_summary_sent_once(tmp_path: Path):
     controller, notifier = make_controller(tmp_path)
     controller.config = ControlConfig(notify=NotifySettings(daily_summary_at="21:00"))
     controller.store.save_config(controller.config, "test")
-    controller.board_polls = {b: {"ts": time.time()} for b in ("upstairs", "downstairs")}
-    controller.on_grid_power(0)
-    asyncio.run(controller.monitor(datetime.now().replace(hour=20, minute=59)))
+
+    def monitor_at(hour: int, minute: int) -> None:
+        # Fresh grid data and board polls at the simulated time, whatever the real clock says
+        now = datetime.now().replace(hour=hour, minute=minute)
+        controller.grid_ts = now.timestamp()
+        controller.board_polls = {b: {"ts": now.timestamp()} for b in ("upstairs", "downstairs")}
+        asyncio.run(controller.monitor(now))
+
+    monitor_at(20, 59)
     assert notifier.messages == []
-    asyncio.run(controller.monitor(datetime.now().replace(hour=21, minute=1)))
-    asyncio.run(controller.monitor(datetime.now().replace(hour=21, minute=2)))
+    monitor_at(21, 1)
+    monitor_at(21, 2)
     assert [m for m in notifier.messages if m.startswith("Summary")] and len(notifier.messages) == 1
