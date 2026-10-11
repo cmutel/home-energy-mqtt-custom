@@ -79,7 +79,9 @@ ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY]
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or settings.db_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    # Safe to share across threads: Python's SQLite is built in serialized
+    # mode (sqlite3.threadsafety == 3). The controller's web server needs this.
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     for ddl in ALL_TABLES:
         conn.execute(ddl)

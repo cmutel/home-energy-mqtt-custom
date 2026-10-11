@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Schedules{% endblock %}
+{% block content %}
+<h2>Schedules</h2>
+<p class="muted">A heater is on while any enabled rule for it is active. Scheduled heaters are never switched off for lack of PV.</p>
+<table>
+  <thead><tr><th>Heater</th><th>Rule</th><th>Note</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+  {% for i, r, active, expired in rules %}
+    <tr {% if not r.enabled or expired %}class="muted"{% endif %}>
+      <td>{{ by_id[r.heater].name }}</td>
+      <td>
+        {% if r.kind == "always_on" %}Always on
+        {% elif r.kind == "daily" %}Daily {{ r.start.strftime("%H:%M") }}–{{ r.stop.strftime("%H:%M") }}
+        {% else %}{{ r.start.strftime("%a %d %b %H:%M") }} → {{ r.stop.strftime("%a %d %b %H:%M") }}{% endif %}
+        {% if expired %}(expired){% endif %}
+      </td>
+      <td>{{ r.note }}</td>
+      <td class="{{ 'on' if active else 'off' }}">{{ "yes" if active else "no" }}</td>
+      <td>
+        <form method="post" action="{{ prefix }}/schedules/{{ i }}/toggle" class="inline">
+          <button class="outline small" {% if locked %}disabled{% endif %}>{{ "disable" if r.enabled else "enable" }}</button></form>
+        <form method="post" action="{{ prefix }}/schedules/{{ i }}/delete" class="inline">
+          <button class="secondary small" {% if locked %}disabled{% endif %}>delete</button></form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No rules</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="{{ prefix }}/schedules/remove-expired"><button class="outline small" {% if locked %}disabled{% endif %}>Remove expired one-off rules</button></form>
+
+{% macro heater_select() %}
+<select name="heater" required>{% for h in heaters %}<option value="{{ h.id }}">{{ h.name }}</option>{% endfor %}</select>
+{% endmacro %}
+
+<h3>Add a rule</h3>
+<div class="grid">
+  <article>
+    <header>Daily window</header>
+    <form method="post" action="{{ prefix }}/schedules/add">
+      <input type="hidden" name="kind" value="daily">
+      {{ heater_select() }}
+      <fieldset role="group"><input type="time" name="start_time" required><input type="time" name="stop_time" required></fieldset>
+      <small class="muted">May cross midnight, e.g. 22:00–02:00.</small>
+      <input name="note" placeholder="Note (optional)">
+      <button {% if locked %}disabled{% endif %}>Add</button>
+    </form>
+  </article>
+  <article>
+    <header>One-off period</header>
+    <form method="post" action="{{ prefix }}/schedules/add">
+      <input type="hidden" name="kind" value="once">
+      {{ heater_select() }}
+      <input type="datetime-local" name="start_dt" required>
+      <input type="datetime-local" name="stop_dt" required>
+      <input name="note" placeholder="Note (optional)">
+      <button {% if locked %}disabled{% endif %}>Add</button>
+    </form>
+  </article>
+  <article>
+    <header>Always on</header>
+    <form method="post" action="{{ prefix }}/schedules/add">
+      <input type="hidden" name="kind" value="always_on">
+      {{ heater_select() }}
+      <input name="note" placeholder="Note (optional)">
+      <button {% if locked %}disabled{% endif %}>Add</button>
+    </form>
+  </article>
+</div>
+{% endblock %}

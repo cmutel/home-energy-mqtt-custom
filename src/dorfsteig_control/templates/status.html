@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<div hx-get="{{ prefix }}/fragments/status" hx-trigger="every 5s" hx-swap="innerHTML">
+  {% include "_status.html" %}
+</div>
+{% endblock %}

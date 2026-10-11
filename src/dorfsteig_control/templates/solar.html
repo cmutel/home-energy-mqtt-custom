@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Solar{% endblock %}
+{% block content %}
+<h2>PV surplus switching</h2>
+<p class="muted">Each tick (20 s): above the export threshold the next heater in the priority list is switched on;
+below the import threshold the last one switched on by PV is switched off. Grid power is positive when exporting.</p>
+<form method="post" action="{{ prefix }}/solar">
+  <label><input type="checkbox" role="switch" name="enabled" value="true" {% if solar.enabled %}checked{% endif %}> Switch heaters on PV surplus</label>
+  <div class="grid">
+    <label>Add a heater above export of (W)<input type="number" name="export_on_w" value="{{ solar.export_on_w | int }}" step="50"></label>
+    <label>Remove a heater below (W, negative = import)<input type="number" name="import_off_w" value="{{ solar.import_off_w | int }}" step="50"></label>
+  </div>
+  <div class="grid">
+    <label>Minimum time between switches of a heater (s)<input type="number" name="min_switch_interval_s" value="{{ solar.min_switch_interval_s | int }}" min="0"></label>
+    <label>Switch PV heaters off if no grid data for (s)<input type="number" name="stale_after_s" value="{{ solar.stale_after_s | int }}" min="30"></label>
+  </div>
+  <button {% if locked %}disabled{% endif %}>Save</button>
+</form>
+
+<h3>Priority</h3>
+<table>
+  <tbody>
+  {% for h in solar.priority %}
+    <tr><td>{{ loop.index }}</td><td>{{ by_id[h].name }}</td>
+      <td>{% for action, label in [("up", "↑"), ("down", "↓"), ("remove", "remove")] %}
+        <form method="post" action="{{ prefix }}/solar/priority" class="inline">
+          <input type="hidden" name="heater" value="{{ h }}"><input type="hidden" name="action" value="{{ action }}">
+          <button class="outline small" {% if locked %}disabled{% endif %}>{{ label }}</button></form>
+      {% endfor %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="{{ prefix }}/solar/priority">
+  <input type="hidden" name="action" value="add">
+  <fieldset role="group">
+    <select name="heater">{% for h in heaters if h.id not in solar.priority %}<option value="{{ h.id }}">{{ h.name }}</option>{% endfor %}</select>
+    <button {% if locked %}disabled{% endif %}>Add to priority</button>
+  </fieldset>
+</form>
+{% endblock %}

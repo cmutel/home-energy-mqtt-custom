@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Wattage{% endblock %}
+{% block content %}
+<h2>Heater power</h2>
+<p class="muted">A test pauses PV switching, measures grid power, toggles one heater, measures again and restores it
+(about 3 minutes). Best done when the house is quiet and nothing else is cycling.
+Every normal switch also gives a passive estimate; once there are three, they're used instead of the last test.</p>
+<div id="test" hx-get="{{ prefix }}/fragments/test" hx-trigger="every 3s">{% include "_test.html" %}</div>
+
+<table>
+  <thead><tr><th>Heater</th><th>Estimate</th><th>Source</th><th></th></tr></thead>
+  <tbody>
+  {% for h in heaters %}{% set w, source = estimates[h.id] %}
+    <tr><td>{{ h.name }}</td><td>{{ w | watts }}</td><td>{{ source }}</td>
+      <td><form method="post" action="{{ prefix }}/wattage/test"><input type="hidden" name="heater" value="{{ h.id }}">
+        <button class="outline small" {% if running %}disabled{% endif %}>test</button></form></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="{{ prefix }}/wattage/test"><input type="hidden" name="heater" value="all">
+  <button class="outline" {% if running %}disabled{% endif %}>Test all heaters (≈35 min)</button></form>
+
+<h3>Measurements</h3>
+<table>
+  <thead><tr><th>Time</th><th>Heater</th><th>Method</th><th>Power</th><th>Noise</th><th>IoTaWatt channel</th><th>Note</th></tr></thead>
+  <tbody>
+  {% for m in measurements %}
+    <tr><td>{{ m.ts | ts }}</td><td>{{ by_id[m.heater].name }}</td><td>{{ m.method }}</td><td>{{ m.watts | watts }}</td>
+      <td>±{{ m.spread | watts }}</td>
+      <td>{% if m.zone %}{{ m.zone[0] }} ({{ m.zone[1] | watts }}){% elif m.method == "active" %}<span class="muted">waiting for data</span>{% endif %}</td>
+      <td>{{ m.note or "" }}</td></tr>
+  {% else %}<tr><td colspan="7" class="muted">No measurements yet</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% set s = status %}
+{% if not s.healthy %}<div class="banner warn">Control loop is not running: boards get no data and fall back to their defaults.</div>{% endif %}
+{% if s.test %}{% if not s.test.done %}<div class="banner warn">Wattage test running on {{ by_id[s.test.heater].name }} ({{ s.test.phase }}); PV switching paused.</div>{% endif %}{% endif %}
+{% if s.legacy_mismatch %}<div class="banner warn">Outputs differ from the legacy controller: <code>{{ s.legacy_mismatch }}</code></div>{% endif %}
+<div class="tiles">
+  <article>
+    <div class="label">Grid</div>
+    {% if s.grid.power is none %}<div class="value">–</div>
+    {% elif s.grid.power >= 0 %}<div class="value on">↑ {{ s.grid.power | watts }}</div><div class="label">exporting</div>
+    {% else %}<div class="value">↓ {{ (-s.grid.power) | watts }}</div><div class="label">importing</div>{% endif %}
+    <div class="label">{{ s.grid.age_s }} s old</div>
+  </article>
+  <article>
+    <div class="label">PV</div>
+    <div class="value">{{ s.pv.power | watts }}</div>
+    {% if today.pv_kwh is not none %}<div class="label">{{ "%.1f" | format(today.pv_kwh) }} kWh today</div>{% endif %}
+  </article>
+  <article>
+    <div class="label">Heating today</div>
+    <div class="value">≈{{ "%.1f" | format(today.heating_kwh) }} kWh</div>
+    <div class="label">≈{{ "%.1f" | format(today.solar_heating_kwh) }} kWh from PV surplus</div>
+  </article>
+  <article>
+    <div class="label">Boards</div>
+    {% for board in ["upstairs", "downstairs"] %}
+      <div>{{ board }}: {{ (s.boards.get(board) or {}).get("ts") | ago }}</div>
+    {% endfor %}
+  </article>
+</div>
+
+<h3>Heaters</h3>
+<table>
+  <thead><tr><th>Heater</th><th>State</th><th>Why</th><th>Since</th><th>Power</th><th>Today</th><th>Boost</th></tr></thead>
+  <tbody>
+  {% for h in s.heaters %}
+    <tr>
+      <td>{{ h.name }}</td>
+      <td class="{{ 'on' if h.on else 'off' }}">{{ "on" if h.on else "off" }}</td>
+      <td>{{ h.reason or "" }}</td>
+      <td>{{ h.since | ago if h.since else "" }}</td>
+      <td>{{ h.watts | watts }}</td>
+      <td>{% if h.id in today.heaters %}{{ "%.1f" | format(today.heaters[h.id].hours) }} h{% endif %}</td>
+      <td>
+        {% for hours in [1, 2, 4] %}
+        <form method="post" action="{{ prefix }}/boost" class="inline">
+          <input type="hidden" name="heater" value="{{ h.id }}"><input type="hidden" name="hours" value="{{ hours }}">
+          <button class="outline small" {% if locked %}disabled{% endif %}>{{ hours }} h</button>
+        </form>
+        {% endfor %}
+        {% if h.id in boosted %}
+        <form method="post" action="{{ prefix }}/boost/stop" class="inline">
+          <input type="hidden" name="heater" value="{{ h.id }}">
+          <button class="secondary small" title="Remove boost rules for this heater" {% if locked %}disabled{% endif %}>stop boost</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h3>Recent switching</h3>
+<table>
+  <thead><tr><th>Time</th><th>Heater</th><th></th><th>Reason</th><th>Grid</th></tr></thead>
+  <tbody>
+  {% for e in s.events[:10] %}
+    <tr><td>{{ e.ts | ts }}</td><td>{{ by_id[e.heater].name }}</td>
+        <td class="{{ 'on' if e.on else 'off' }}">{{ "on" if e.on else "off" }}</td>
+        <td>{{ e.reason }}{% if e.dry_run %} <small class="muted">(dry run)</small>{% endif %}</td>
+        <td>{{ e.grid_power | watts }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">Nothing yet</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

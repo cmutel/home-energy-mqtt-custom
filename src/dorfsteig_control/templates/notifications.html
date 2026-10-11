@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h2>Notifications</h2>
+{% if not pushover %}<div class="banner warn">Pushover isn't configured (set DORFSTEIG_PUSHOVER_TOKEN and DORFSTEIG_PUSHOVER_USER in .env); messages are only logged.</div>{% endif %}
+<p class="muted">Alerts are always sent: no grid power data, a board not polling, and heater power drifting from the last test.</p>
+<form method="post" action="{{ prefix }}/notifications">
+  <div class="grid">
+    <label>Daily summary at (empty = off)<input type="time" name="daily_summary_at" value="{{ notify.daily_summary_at.strftime('%H:%M') if notify.daily_summary_at else '' }}"></label>
+    <label>Midday status at (empty = off)<input type="time" name="midday_status_at" value="{{ notify.midday_status_at.strftime('%H:%M') if notify.midday_status_at else '' }}"></label>
+  </div>
+  <div class="grid">
+    <label>Board offline after (min)<input type="number" name="board_offline_min" value="{{ (notify.board_offline_after_s / 60) | round(1) }}" min="1" step="0.5"></label>
+    <label>Repeat an alert at most every (h)<input type="number" name="alert_repeat_h" value="{{ (notify.alert_repeat_s / 3600) | round(1) }}" min="0.5" step="0.5"></label>
+  </div>
+  <button {% if locked %}disabled{% endif %}>Save</button>
+</form>
+<div class="grid">
+  {% for kind, label in [("test", "Send test message"), ("summary", "Send today's summary now"), ("midday", "Send status now")] %}
+  <form method="post" action="{{ prefix }}/notifications/send"><input type="hidden" name="kind" value="{{ kind }}"><button class="outline">{{ label }}</button></form>
+  {% endfor %}
+</div>
+<h3>Recent messages</h3>
+<table>
+  {% for ts, title, message in c.notifier.sent %}
+  <tr><td>{{ ts | ts }}</td><td><strong>{{ title }}</strong><br><small style="white-space: pre-line">{{ message }}</small></td></tr>
+  {% else %}<tr><td class="muted">None since the controller started</td></tr>{% endfor %}
+</table>
+{% endblock %}

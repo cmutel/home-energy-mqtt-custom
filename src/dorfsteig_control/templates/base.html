@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Heating{% endblock %} · Dorfsteig</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/pico.min.css">
+  <script src="{{ prefix }}/static/htmx.min.js"></script>
+  <style>
+    :root { --pico-font-size: 95%; }
+    nav { margin-bottom: 1rem; }
+    .on { color: var(--pico-ins-color); font-weight: bold; }
+    .off { color: var(--pico-muted-color); }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1rem; }
+    .tiles article { margin: 0; padding: 1rem; }
+    .tiles .value { font-size: 1.6rem; font-weight: bold; }
+    .tiles .label { color: var(--pico-muted-color); font-size: .85rem; }
+    td form, td button { margin: 0; }
+    td button, .small { padding: .2rem .55rem; font-size: .8rem; width: auto; }
+    .inline { display: inline-block; }
+    .banner { padding: .6rem 1rem; border-radius: .4rem; margin-bottom: 1rem; }
+    .banner.ok { background: color-mix(in srgb, var(--pico-ins-color) 15%, transparent); }
+    .banner.warn { background: color-mix(in srgb, var(--pico-del-color) 15%, transparent); }
+    .muted { color: var(--pico-muted-color); }
+  </style>
+</head>
+<body>
+<main class="container">
+  <nav>
+    <ul><li><strong>Dorfsteig heating</strong>{% if c.dry_run %} <mark>dry run</mark>{% endif %}</li></ul>
+    <ul>
+      <li><a href="{{ prefix }}/">Status</a></li>
+      <li><a href="{{ prefix }}/schedules">Schedules</a></li>
+      <li><a href="{{ prefix }}/solar">Solar</a></li>
+      <li><a href="{{ prefix }}/wattage">Wattage</a></li>
+      <li><a href="{{ prefix }}/notifications">Notifications</a></li>
+      <li><a href="{{ prefix }}/history">History</a></li>
+      <li><a href="/dashboards/">Dashboards</a></li>
+    </ul>
+  </nav>
+  {% if msg %}<div class="banner ok">{{ msg }}</div>{% endif %}
+  {% if error %}<div class="banner warn">{{ error }}</div>{% endif %}
+  {% if locked %}<div class="banner warn">Config is read from <code>{{ c.legacy_config }}</code>; changes here are disabled.</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

@@ -17,7 +17,15 @@ class Settings(BaseSettings):
 
     db_path: Path = _default_db_path
 
+    # Heating controller web server; nginx proxies the ESP32 URLs to it
+    control_host: str = "127.0.0.1"
+    control_port: int = 8002
+
     log_level: str = "INFO"
+
+    # Pushover (https://pushover.net); messages are only logged if unset
+    pushover_token: str = ""
+    pushover_user: str = ""
 
 
 settings = Settings()

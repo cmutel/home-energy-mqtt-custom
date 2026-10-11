@@ -50,27 +50,29 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 - [x] Merged nginx config, systemd units.
 - [ ] Deploy ingest + Datasette on the Pi and start collecting data.
 
-### 1. Controller port
+### 1. Controller port (code done 2026-10-11)
 
-- Pure decision function `decide(state, reading, config, now)`; schedule
-  rules (always on, daily window incl. overnight, one-off range, boost).
-- Same behaviour as the legacy controller, with the bugs above fixed.
-- State and event log in SQLite; logging to journald.
-- Serve the ESP32 JSON from the app so a dead controller means the boards
-  fall back to safe defaults; record when each board last polled.
-- Dry-run mode alongside the legacy controller, then cut over and retire
-  supervisor's `heating_controller.py`.
+- [x] Pure decision function `engine.decide`; schedule rules (always on,
+      daily window incl. overnight, one-off range/boost).
+- [x] Same behaviour as the legacy controller, with the bugs above fixed;
+      PV heaters are also shed if grid data goes stale.
+- [x] State, config versions and event log in SQLite; logging to journald.
+- [x] ESP32 JSON served by the app (503 if the loop stalls); last poll per board.
+- [x] Dry-run mode with `--compare-legacy`; verified identical outputs live.
+- [ ] Deploy and cut over; retire supervisor's `control_heating`.
 
-### 2. Web UI, wattage test, Pushover
+### 2. Web UI, wattage test, Pushover (code done 2026-10-11)
 
-- Status page (live via HTMX), heaters, schedules, settings, history.
-- Import `config.json` once; retire `write_config.py`.
-- Active wattage test: switch one heater on alone, measure the step in grid
-  power and in the IoTaWatt zone; also maps heaters to zones.
-- Passive wattage estimate from every switching event; alert on drift.
-- Pushover client with rate limiting; replaces `warn_mbmd_down.py`. Alerts
-  for stale MQTT data, a board not polling, controller restart, forced
-  shedding. Daily summary in the evening.
+- [x] FastAPI + Jinja2 + HTMX + Pico.css UI under /heating/: status (live),
+      boost 1/2/4 h, schedules, PV settings and priority, wattage,
+      notifications, history.
+- [x] `import-legacy-config`; `write_config.py` no longer needed after cutover.
+- [x] Active wattage test (toggle one heater, compare grid power; IoTaWatt
+      channel matched afterwards) and passive estimates; drift alert.
+- [x] Pushover with per-alert rate limiting: stale grid data, board offline,
+      controller start, wattage drift; daily summary and optional midday
+      status. Replaces `warn_mbmd_down.py`.
+- [ ] Add Pushover credentials on the Pi; run "test all heaters" once.
 
 ### 3. New PV control
 

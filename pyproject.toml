@@ -8,10 +8,15 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "aiomqtt>=2.5.1",
+    "fastapi>=0.143.0",
     "httpx>=0.28.1",
+    "jinja2>=3.1.6",
     "paho-mqtt>=2.1.0",
     "platformdirs>=4.9.6",
     "pydantic-settings>=2.13.1",
+    "python-multipart>=0.0.32",
+    "uvicorn>=0.54.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +32,7 @@ ml = [
 
 [project.scripts]
 dorfsteig-ingest = "dorfsteig_ingest.cli:main"
+dorfsteig-control = "dorfsteig_control.cli:main"
 
 [dependency-groups]
 dev = [

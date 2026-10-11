@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<h2>Switching events</h2>
+<table>
+  <thead><tr><th>Time</th><th>Heater</th><th></th><th>Reason</th><th>Grid</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+    <tr><td>{{ e.ts | ts("%a %d %b %H:%M:%S") }}</td><td>{{ by_id[e.heater].name }}</td>
+      <td class="{{ 'on' if e.on else 'off' }}">{{ "on" if e.on else "off" }}</td>
+      <td>{{ e.reason }}{% if e.dry_run %} <small class="muted">(dry run)</small>{% endif %}</td><td>{{ e.grid_power | watts }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Config changes</h2>
+{% for id, saved_at, source, config in configs %}
+<details><summary>{{ saved_at | ts("%a %d %b %Y %H:%M") }} · {{ source }}</summary><pre><code>{{ config }}</code></pre></details>
+{% else %}<p class="muted">Using the default config; nothing saved yet.</p>{% endfor %}
+{% endblock %}

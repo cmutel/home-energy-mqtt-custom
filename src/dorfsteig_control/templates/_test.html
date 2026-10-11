@@ -1,0 +1,10 @@
+{% if test %}
+  {% if not test.done %}
+  <div class="banner warn">Testing {{ by_id[test.heater].name }}: {{ test.phase }} (started {{ test.started | ago }})
+    <form method="post" action="{{ prefix }}/wattage/cancel" class="inline"><button class="secondary small">cancel</button></form></div>
+  {% elif test.result is not none %}
+  <div class="banner ok">Last test: {{ by_id[test.heater].name }} ≈ {{ test.result | watts }}. {{ test.note }}</div>
+  {% else %}
+  <div class="banner warn">Last test of {{ by_id[test.heater].name }} gave no result. {{ test.note }}</div>
+  {% endif %}
+{% endif %}

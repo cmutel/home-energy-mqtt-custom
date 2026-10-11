@@ -8,7 +8,7 @@ Raspberry Pi.
 |---|---|---|
 | `dorfsteig_core` | Settings, domain models, SQLite schema, MQTT helpers | In use |
 | `dorfsteig_ingest` | Store IoTaWatt, MBMD power and air-quality data in SQLite | In use |
-| `dorfsteig_control` | Heating controller, ESP32 outputs, web UI, Pushover | Planned (phase 1) |
+| `dorfsteig_control` | Heating controller, ESP32 outputs, web UI, wattage tests, Pushover | In use |
 | `dorfsteig_forecast` | Weather/PV forecasts and heating plans | Planned (phase 4) |
 
 Dependency rules between the libraries are enforced by import-linter
@@ -23,7 +23,7 @@ See [PLAN.md](PLAN.md) for the roadmap.
 ```
 src/dorfsteig_core/       shared code
 src/dorfsteig_ingest/     data collection (CLI: dorfsteig-ingest)
-src/dorfsteig_control/    heating controller (not yet ported)
+src/dorfsteig_control/    heating controller + web UI (CLI: dorfsteig-control)
 src/dorfsteig_forecast/   forecasting (not yet started)
 tests/                    pytest, one folder per library
 dashboards/               static HTML dashboards served by nginx, query Datasette
@@ -72,6 +72,32 @@ uv run dorfsteig-ingest backfill-iotawatt --from 2w
 uv run dorfsteig-ingest listen 'haus/#' 2   # show one payload per topic for 2 minutes
 ```
 
+## Heating controller
+
+One process (`dorfsteig-control run`) reads grid power from MQTT, decides
+every 20 s which heaters should be on, and serves:
+
+| URL | What |
+|---|---|
+| `/upstairs.json`, `/downstairs.json` | Relay states for the ESP32 boards (unchanged format). 503 if the control loop stalls, so the boards fall back to their defaults |
+| `/status.json` | Same shape as the legacy controller's status file |
+| `/heating/` | Web UI: status, boosts, schedules, PV settings, wattage tests, notifications, history |
+| `/heating/api/status` | Everything on the status page as JSON |
+
+Config (schedule rules, PV thresholds and priority, notification times) is
+stored in SQLite and edited in the web UI; every version is kept. The control
+logic is a pure function in `engine.py`; its docstring describes the rules.
+
+```bash
+uv run dorfsteig-control import-legacy-config ~/config.json   # once, from write_config.py output
+uv run dorfsteig-control show-config
+uv run dorfsteig-control run                                   # live
+uv run dorfsteig-control run --dry-run --compare-legacy ~/Web  # alongside the legacy controller
+```
+
+Pushover needs `DORFSTEIG_PUSHOVER_TOKEN` and `DORFSTEIG_PUSHOVER_USER` in
+`.env`; without them (and always in dry runs) messages are only logged.
+
 ## Deployment on the Pi
 
 The Pi has system Python 3.11; uv installs 3.14 for the project.
@@ -98,8 +124,21 @@ sudo systemctl enable --now dorfsteig-datasette
 journalctl -u dorfsteig-ingest@power -f
 ```
 
-nginx (replaces the default site; `/upstairs.json`, `/downstairs.json` and
-`/status.json` are still served from `~/Web/` for the legacy controller):
+Controller cutover (replaces supervisor's `control_heating` and `warn_mbmd_down`):
+
+```bash
+uv run dorfsteig-control import-legacy-config ~/config.json
+SC="$HOME/venvs/supervisor/bin/supervisorctl -c $HOME/venvs/supervisor/etc/supervisord.conf"
+$SC stop control_heating warn_mbmd_down
+sudo systemctl enable --now dorfsteig-control
+journalctl -u dorfsteig-control -f
+```
+
+To go back: `sudo systemctl stop dorfsteig-control`, `$SC start control_heating`,
+and restore the old nginx site (below).
+
+nginx (replaces the default site; the ESP32 files, `/status.json` and
+`/heating/` go to the controller, everything else is served from `~/Web/` as before):
 
 ```bash
 sudo cp deploy/nginx/dorfsteig.conf /etc/nginx/sites-available/dorfsteig
@@ -108,5 +147,5 @@ sudo rm /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Dashboards: `http://192.168.1.192/dashboards/`. Datasette:
-`http://192.168.1.192/datasette/`.
+Heating UI: `http://192.168.1.192/heating/`. Dashboards:
+`http://192.168.1.192/dashboards/`. Datasette: `http://192.168.1.192/datasette/`.
