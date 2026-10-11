@@ -1,0 +1,134 @@
+title: Dorfsteig
+
+databases:
+  dorfsteig:
+    tables:
+      iotawatt_readings:
+        description: One-minute energy readings from IoTaWatt
+        columns:
+          ts:            Unix timestamp (seconds)
+          input_0:       Voltage (V)
+          mains_a:       Mains circuit A (W)
+          mains_b:       Mains circuit B (W)
+          oven:          Oven (W)
+          zone_a:        Heating zone A (W)
+          zone_b:        Heating zone B (W)
+          zone_c:        Heating zone C (W)
+          zone_d:        Heating zone D (W)
+          zone_e:        Heating zone E (W)
+          zone_f:        Heating zone F (W)
+          clothes_washer: Clothes washer (W)
+          clothes_dryer:  Clothes dryer (W)
+          water_heater:   Water heater (W)
+          dishwasher:     Dishwasher (W)
+          stovetop:       Stovetop (W)
+    queries:
+      last_24h:
+        title: Last 24 hours
+        sql: >
+          SELECT
+            datetime(ts, 'unixepoch', 'localtime') AS time,
+            input_0,
+            mains_a + mains_b AS mains_total,
+            zone_a + zone_b + zone_c + zone_d + zone_e + zone_f AS heating_total,
+            oven, stovetop, dishwasher, clothes_washer, clothes_dryer, water_heater
+          FROM iotawatt_readings
+          WHERE ts >= unixepoch('now', '-1 day')
+          ORDER BY ts
+
+      daily_totals:
+        title: Daily totals (Wh)
+        sql: >
+          SELECT
+            date(ts, 'unixepoch', 'localtime') AS day,
+            ROUND(SUM(mains_a + mains_b) / 60.0) AS mains_wh,
+            ROUND(SUM(zone_a + zone_b + zone_c + zone_d + zone_e + zone_f) / 60.0) AS heating_wh,
+            ROUND(SUM(oven + stovetop) / 60.0) AS cooking_wh,
+            ROUND(SUM(clothes_washer + clothes_dryer) / 60.0) AS laundry_wh,
+            ROUND(SUM(water_heater) / 60.0) AS water_heater_wh,
+            ROUND(SUM(dishwasher) / 60.0) AS dishwasher_wh
+          FROM iotawatt_readings
+          GROUP BY day
+          ORDER BY day DESC
+
+      hourly_profile:
+        title: Average hourly load profile (all time)
+        sql: >
+          SELECT
+            strftime('%H', ts, 'unixepoch', 'localtime') AS hour,
+            ROUND(AVG(mains_a + mains_b)) AS avg_mains_w,
+            ROUND(AVG(zone_a + zone_b + zone_c + zone_d + zone_e + zone_f)) AS avg_heating_w
+          FROM iotawatt_readings
+          GROUP BY hour
+          ORDER BY hour
+
+      heating_zones:
+        title: Heating zones — last 24 hours
+        sql: >
+          SELECT
+            datetime(ts, 'unixepoch', 'localtime') AS time,
+            zone_a, zone_b, zone_c, zone_d, zone_e, zone_f
+          FROM iotawatt_readings
+          WHERE ts >= unixepoch('now', '-1 day')
+          ORDER BY ts
+
+plugins:
+  datasette-dashboards:
+    daily-energy:
+      title: Daily energy consumption
+      description: All channels for a single day — use the filter to switch days
+      filters:
+        day:
+          name: Day
+          type: date
+          default: "2023-08-10"
+      charts:
+        all-channels:
+          title: All channels (W)
+          db: dorfsteig
+          query: >
+            SELECT time, channel, watts FROM (
+              SELECT datetime(ts, 'unixepoch', 'localtime') AS time, 'mains_a'        AS channel, mains_a        AS watts FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'mains_b',                  mains_b        FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'oven',                     oven           FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_a',                   zone_a         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_b',                   zone_b         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_c',                   zone_c         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_d',                   zone_d         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_e',                   zone_e         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_f',                   zone_f         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_washer',           clothes_washer FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_dryer',            clothes_dryer  FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'water_heater',             water_heater   FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'dishwasher',               dishwasher     FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              UNION ALL
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'stovetop',                 stovetop       FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+            ) ORDER BY time, channel
+          library: vega-lite
+          display:
+            mark: line
+            encoding:
+              x:
+                field: time
+                type: temporal
+                title: Time
+              y:
+                field: watts
+                type: quantitative
+                title: Power (W)
+              color:
+                field: channel
+                type: nominal
+                title: Channel

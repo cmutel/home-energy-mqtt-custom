@@ -1,0 +1,23 @@
+# Template unit: one instance per ingest command.
+#   sudo systemctl enable --now dorfsteig-ingest@power
+#   sudo systemctl enable --now dorfsteig-ingest@iotawatt
+#   sudo systemctl enable --now dorfsteig-ingest@climate
+[Unit]
+Description=Dorfsteig ingest: %i
+Documentation=https://github.com/cmutel/home-energy-mqtt-custom
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cmutel
+WorkingDirectory=/home/cmutel/dorfsteig
+EnvironmentFile=/home/cmutel/dorfsteig/.env
+ExecStart=/home/cmutel/dorfsteig/.venv/bin/dorfsteig-ingest %i
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

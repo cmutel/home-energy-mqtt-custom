@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Status — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; }
+    nav { margin-bottom: 16px; }
+    nav a {
+      display: inline-block; padding: 6px 14px; margin-right: 6px;
+      background: white; border-radius: 4px; text-decoration: none;
+      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
+    }
+    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
+    nav a:hover:not(.active) { background: #e8e8e8; }
+
+    .card {
+      background: white; border-radius: 6px; padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 1rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 0.8rem; color: #888; padding: 4px 8px; border-bottom: 1px solid #eee; }
+    td { padding: 8px; border-bottom: 1px solid #f5f5f5; font-size: 0.95rem; }
+    tr:last-child td { border-bottom: none; }
+
+    .dot {
+      display: inline-block; width: 10px; height: 10px;
+      border-radius: 50%; margin-right: 8px; vertical-align: middle;
+    }
+    .green  { background: #54a24b; }
+    .yellow { background: #f5a623; }
+    .red    { background: #e45756; }
+    .grey   { background: #aaa; }
+
+    #refresh-note { color: #aaa; font-size: 0.8rem; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="daily.html">Daily consumption</a>
+    <a href="power.html">Solar &amp; grid</a>
+    <a href="climate.html">Air quality</a>
+    <a href="status.html" class="active">Status</a>
+  </nav>
+  <h1>System Status</h1>
+  <p id="refresh-note"></p>
+
+  <div class="card">
+    <h2>Data sources</h2>
+    <table>
+      <thead>
+        <tr><th>Source</th><th>Last reading</th><th>Age</th><th></th></tr>
+      </thead>
+      <tbody id="source-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="chart-card">
+    <h2>Readings per hour — last 24 hours</h2>
+    <div id="chart"></div>
+  </div>
+
+  <script>
+    const API = '/datasette';
+
+    // Thresholds for status colour (seconds)
+    const THRESHOLDS = { green: 10 * 60, yellow: 60 * 60 };
+
+    function statusDot(ageSeconds) {
+      if (ageSeconds === null)                       return '<span class="dot grey"></span>';
+      if (ageSeconds < THRESHOLDS.green)             return '<span class="dot green"></span>';
+      if (ageSeconds < THRESHOLDS.yellow)            return '<span class="dot yellow"></span>';
+      return '<span class="dot red"></span>';
+    }
+
+    function fmtAge(ageSeconds) {
+      if (ageSeconds === null) return '—';
+      if (ageSeconds < 60)   return `${ageSeconds}s ago`;
+      if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)}m ago`;
+      if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h ago`;
+      return `${Math.floor(ageSeconds / 86400)}d ago`;
+    }
+
+    function fmtTs(ts) {
+      if (!ts) return '—';
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    async function query(sql) {
+      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
+      const resp = await fetch(url);
+      return resp.json();
+    }
+
+    async function load() {
+      const now = Math.floor(Date.now() / 1000);
+
+      const [iotawatt, inverter, grid, climate] = await Promise.all([
+        query('SELECT MAX(ts) AS ts FROM iotawatt_readings'),
+        query('SELECT MAX(ts) AS ts FROM inverter_readings'),
+        query('SELECT MAX(ts) AS ts FROM grid_readings'),
+        query('SELECT room, MAX(ts) AS ts FROM air_quality GROUP BY room ORDER BY room'),
+      ]);
+
+      const sources = [
+        { label: 'IoTaWatt',        ts: iotawatt[0]?.ts },
+        { label: 'Inverter (MQTT)', ts: inverter[0]?.ts },
+        { label: 'Grid (MQTT)',     ts: grid[0]?.ts },
+        ...climate.map(r => ({ label: `Air quality — ${r.room}`, ts: r.ts })),
+      ];
+
+      const tbody = document.getElementById('source-rows');
+      tbody.innerHTML = sources.map(({ label, ts }) => {
+        const age = ts ? now - ts : null;
+        return `<tr>
+          <td>${statusDot(age)}${label}</td>
+          <td>${fmtTs(ts)}</td>
+          <td>${fmtAge(age)}</td>
+        </tr>`;
+      }).join('');
+
+      await loadChart(now);
+
+      const t = new Date().toLocaleTimeString();
+      document.getElementById('refresh-note').textContent = `Last updated ${t} — refreshes every 30 seconds`;
+    }
+
+    async function loadChart(now) {
+      const since = now - 86400;
+      const rows = await query(`
+        SELECT 'IoTaWatt'        AS src, (ts / 3600) * 3600 AS hour, COUNT(*) AS n FROM iotawatt_readings WHERE ts > ${since} GROUP BY hour
+        UNION ALL
+        SELECT 'Inverter',              (ts / 3600) * 3600,          COUNT(*)     FROM inverter_readings WHERE ts > ${since} GROUP BY hour
+        UNION ALL
+        SELECT 'Grid',                  (ts / 3600) * 3600,          COUNT(*)     FROM grid_readings     WHERE ts > ${since} GROUP BY hour
+        UNION ALL
+        SELECT 'Air quality (' || room || ')', (ts / 3600) * 3600, COUNT(*) FROM air_quality WHERE ts > ${since} GROUP BY room, hour
+        ORDER BY hour
+      `);
+
+      const bySrc = {};
+      for (const r of rows) {
+        (bySrc[r.src] = bySrc[r.src] || []).push(r);
+      }
+
+      const traces = Object.entries(bySrc).map(([src, pts]) => ({
+        x: pts.map(p => new Date(p.hour * 1000).toISOString()),
+        y: pts.map(p => p.n),
+        name: src,
+        type: 'bar',
+      }));
+
+      Plotly.react('chart', traces, {
+        barmode: 'group',
+        xaxis: { type: 'date', title: 'Hour' },
+        yaxis: { title: 'Readings', rangemode: 'tozero' },
+        margin: { t: 10, r: 20, b: 60, l: 60 },
+        height: 280,
+        legend: {},
+      });
+    }
+
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>

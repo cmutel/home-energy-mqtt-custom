@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Solar &amp; Grid Power — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; }
+    nav { margin-bottom: 16px; }
+    nav a {
+      display: inline-block; padding: 6px 14px; margin-right: 6px;
+      background: white; border-radius: 4px; text-decoration: none;
+      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
+    }
+    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
+    nav a:hover:not(.active) { background: #e8e8e8; }
+    .controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+      background: white; padding: 12px 16px; border-radius: 6px;
+    }
+    .controls label { font-weight: bold; }
+    input[type=date] { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button {
+      font-size: 1rem; padding: 4px 14px; cursor: pointer;
+      border: 1px solid #ccc; border-radius: 4px; background: white;
+    }
+    button:hover { background: #e8e8e8; }
+    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
+    #chart  { background: white; border-radius: 6px; padding: 8px; margin-bottom: 16px; }
+    #totals { background: white; border-radius: 6px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="daily.html">Daily consumption</a>
+    <a href="power.html" class="active">Solar &amp; grid</a>
+    <a href="climate.html">Air quality</a>
+  </nav>
+  <h1>Solar &amp; Grid Power</h1>
+  <div class="controls">
+    <label for="day">Day</label>
+    <button id="prev">&#9664;</button>
+    <input type="date" id="day" value="">
+    <button id="next">&#9654;</button>
+    <span id="status"></span>
+  </div>
+  <div id="chart"></div>
+  <div id="totals"></div>
+
+  <script>
+    const API = '/datasette';
+
+    const dayInput = document.getElementById('day');
+    const status   = document.getElementById('status');
+
+    async function load(day) {
+      status.textContent = 'Loading…';
+
+      // Join inverter and grid on timestamp, derive house consumption
+      const sql = `
+        SELECT
+          datetime(i.ts, 'unixepoch', 'localtime') AS time,
+          i.power_ac                                AS solar_w,
+          g.power                                   AS grid_w,
+          i.power_ac - g.power                      AS house_w,
+          i.export_total                            AS solar_kwh_total,
+          g.import_total                            AS grid_import_total,
+          g.export_total                            AS grid_export_total
+        FROM inverter_readings i
+        LEFT JOIN grid_readings g ON i.ts = g.ts
+        WHERE date(i.ts, 'unixepoch', 'localtime') = '${day}'
+        ORDER BY i.ts
+      `;
+      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
+
+      let rows;
+      try {
+        const resp = await fetch(url);
+        rows = await resp.json();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        return;
+      }
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        status.textContent = 'No data for this day.';
+        Plotly.purge('chart');
+        Plotly.purge('totals');
+        return;
+      }
+
+      renderChart(rows, day);
+      renderTotals(rows);
+      status.textContent = `${rows.length} readings`;
+    }
+
+    function renderChart(rows, day) {
+      const times = rows.map(r => r.time);
+
+      const traces = [
+        {
+          x: times, y: rows.map(r => r.solar_w),
+          name: 'Solar production',
+          mode: 'lines', line: { color: '#f5a623', width: 1.5 },
+          hovertemplate: '%{y:.0f} W<extra>Solar</extra>',
+        },
+        {
+          x: times, y: rows.map(r => r.house_w),
+          name: 'House consumption',
+          mode: 'lines', line: { color: '#4c78a8', width: 1.5 },
+          hovertemplate: '%{y:.0f} W<extra>House</extra>',
+        },
+        {
+          x: times, y: rows.map(r => r.grid_w),
+          name: 'Grid (+ export / − import)',
+          mode: 'lines', line: { color: '#e45756', width: 1.5 },
+          hovertemplate: '%{y:.0f} W<extra>Grid</extra>',
+        },
+      ];
+
+      Plotly.react('chart', traces, {
+        xaxis: { type: 'date', title: 'Time' },
+        yaxis: { title: 'Power (W)' },
+        shapes: [{                          // zero line for grid
+          type: 'line', xref: 'paper', x0: 0, x1: 1,
+          yref: 'y', y0: 0, y1: 0,
+          line: { color: '#aaa', width: 1, dash: 'dot' },
+        }],
+        hovermode: 'x unified',
+        legend: {},
+        margin: { t: 20, r: 20, b: 60, l: 70 },
+        height: 420,
+      });
+    }
+
+    function renderTotals(rows) {
+      // Derive kWh from cumulative meter fields (last − first).
+      // Falls back to integrating instantaneous watts if meter data is missing.
+      function deltaOrIntegrate(lastField, wField) {
+        const first = rows[0][lastField], last = rows[rows.length - 1][lastField];
+        if (first != null && last != null && last !== first) {
+          return last - first;
+        }
+        // Integrate: sum of watts × (1 min / 60) = Wh → kWh
+        return rows.reduce((s, r) => s + (r[wField] || 0), 0) / 60 / 1000;
+      }
+
+      const solarKwh      = deltaOrIntegrate('solar_kwh_total',   'solar_w');
+      const importKwh     = deltaOrIntegrate('grid_import_total',  null);
+      const exportKwh     = deltaOrIntegrate('grid_export_total',  null);
+      const houseKwh      = rows.reduce((s, r) => s + Math.max(0, r.house_w || 0), 0) / 60 / 1000;
+      const selfUseKwh    = Math.max(0, solarKwh - exportKwh);
+
+      const labels = ['Solar produced', 'House consumed', 'Self-consumed solar', 'Imported from grid', 'Exported to grid'];
+      const values = [solarKwh, houseKwh, selfUseKwh, importKwh, exportKwh];
+      const colors = ['#f5a623', '#4c78a8', '#72b7b2', '#e45756', '#54a24b'];
+
+      Plotly.react('totals', [{
+        type: 'bar',
+        orientation: 'h',
+        x: values,
+        y: labels,
+        text: values.map(v => `${v.toFixed(2)} kWh`),
+        textposition: 'outside',
+        marker: { color: colors },
+        hovertemplate: '%{x:.3f} kWh<extra>%{y}</extra>',
+      }], {
+        xaxis: { title: 'kWh', rangemode: 'tozero' },
+        margin: { t: 20, r: 110, b: 50, l: 160 },
+        height: 280,
+      });
+    }
+
+    function formatLocalDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function shiftDay(delta) {
+      const d = new Date(dayInput.value + 'T00:00:00');
+      d.setDate(d.getDate() + delta);
+      dayInput.value = formatLocalDate(d);
+      load(dayInput.value);
+    }
+
+    dayInput.addEventListener('change', () => load(dayInput.value));
+    document.getElementById('prev').addEventListener('click', () => shiftDay(-1));
+    document.getElementById('next').addEventListener('click', () => shiftDay(+1));
+
+    dayInput.value = formatLocalDate(new Date());
+    load(dayInput.value);
+  </script>
+</body>
+</html>

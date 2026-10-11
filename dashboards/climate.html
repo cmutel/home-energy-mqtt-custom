@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Air Quality — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; }
+    nav { margin-bottom: 16px; }
+    nav a {
+      display: inline-block; padding: 6px 14px; margin-right: 6px;
+      background: white; border-radius: 4px; text-decoration: none;
+      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
+    }
+    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
+    nav a:hover:not(.active) { background: #e8e8e8; }
+    .controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+      background: white; padding: 12px 16px; border-radius: 6px;
+    }
+    .controls label { font-weight: bold; }
+    input[type=date] { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button {
+      font-size: 1rem; padding: 4px 14px; cursor: pointer;
+      border: 1px solid #ccc; border-radius: 4px; background: white;
+    }
+    button:hover { background: #e8e8e8; }
+    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
+    .chart { background: white; border-radius: 6px; padding: 8px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="daily.html">Daily consumption</a>
+    <a href="power.html">Solar &amp; grid</a>
+    <a href="climate.html" class="active">Air quality</a>
+  </nav>
+  <h1>Air Quality</h1>
+  <div class="controls">
+    <label for="day">Day</label>
+    <button id="prev">&#9664;</button>
+    <input type="date" id="day" value="">
+    <button id="next">&#9654;</button>
+    <span id="status"></span>
+  </div>
+  <div id="chart-temp"  class="chart"></div>
+  <div id="chart-pm"    class="chart"></div>
+
+  <script>
+    const API = '/datasette';
+    const ROOMS = ['balkon', 'küchen'];
+    const COLORS = { balkon: '#4c78a8', 'küchen': '#f58518' };
+
+    const dayInput = document.getElementById('day');
+    const status   = document.getElementById('status');
+
+    async function load(day) {
+      status.textContent = 'Loading…';
+
+      const sql = `
+        SELECT
+          datetime(ts, 'unixepoch', 'localtime') AS time,
+          room, temperature, humidity, pm25, pm10
+        FROM air_quality
+        WHERE date(ts, 'unixepoch', 'localtime') = '${day}'
+        ORDER BY ts
+      `;
+      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
+
+      let rows;
+      try {
+        const resp = await fetch(url);
+        rows = await resp.json();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        return;
+      }
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        status.textContent = 'No data for this day.';
+        Plotly.purge('chart-temp');
+        Plotly.purge('chart-pm');
+        return;
+      }
+
+      const byRoom = {};
+      for (const r of rows) {
+        (byRoom[r.room] = byRoom[r.room] || []).push(r);
+      }
+
+      renderTemp(byRoom);
+      renderPM(byRoom);
+      status.textContent = `${rows.length} readings`;
+    }
+
+    function roomRows(byRoom, room) {
+      return byRoom[room] || [];
+    }
+
+    function renderTemp(byRoom) {
+      const traces = [];
+      for (const room of ROOMS) {
+        const rows = roomRows(byRoom, room);
+        const label = room.charAt(0).toUpperCase() + room.slice(1);
+        traces.push({
+          x: rows.map(r => r.time), y: rows.map(r => r.temperature),
+          name: `${label} — temperature`,
+          mode: 'lines', yaxis: 'y1',
+          line: { color: COLORS[room], width: 1.5 },
+          hovertemplate: '%{y:.1f}°C<extra>' + label + '</extra>',
+        });
+        traces.push({
+          x: rows.map(r => r.time), y: rows.map(r => r.humidity),
+          name: `${label} — humidity`,
+          mode: 'lines', yaxis: 'y2',
+          line: { color: COLORS[room], width: 1.5, dash: 'dot' },
+          hovertemplate: '%{y:.1f}%<extra>' + label + ' humidity</extra>',
+        });
+      }
+
+      Plotly.react('chart-temp', traces, {
+        yaxis:  { title: 'Temperature (°C)' },
+        yaxis2: { title: 'Humidity (%)', overlaying: 'y', side: 'right', rangemode: 'tozero' },
+        xaxis:  { type: 'date' },
+        hovermode: 'x unified',
+        legend: {},
+        margin: { t: 20, r: 80, b: 60, l: 70 },
+        height: 320,
+      });
+    }
+
+    function renderPM(byRoom) {
+      const traces = [];
+      for (const room of ROOMS) {
+        const rows = roomRows(byRoom, room);
+        const label = room.charAt(0).toUpperCase() + room.slice(1);
+        traces.push({
+          x: rows.map(r => r.time), y: rows.map(r => r.pm25),
+          name: `${label} — PM2.5`,
+          mode: 'lines',
+          line: { color: COLORS[room], width: 1.5 },
+          hovertemplate: '%{y:.2f} µg/m³<extra>' + label + ' PM2.5</extra>',
+        });
+        traces.push({
+          x: rows.map(r => r.time), y: rows.map(r => r.pm10),
+          name: `${label} — PM10`,
+          mode: 'lines',
+          line: { color: COLORS[room], width: 1.5, dash: 'dot' },
+          hovertemplate: '%{y:.2f} µg/m³<extra>' + label + ' PM10</extra>',
+        });
+      }
+
+      Plotly.react('chart-pm', traces, {
+        yaxis:  { title: 'Particulates (µg/m³)', rangemode: 'tozero' },
+        xaxis:  { type: 'date' },
+        hovermode: 'x unified',
+        legend: {},
+        margin: { t: 20, r: 20, b: 60, l: 70 },
+        height: 320,
+      });
+    }
+
+    function formatLocalDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function shiftDay(delta) {
+      const d = new Date(dayInput.value + 'T00:00:00');
+      d.setDate(d.getDate() + delta);
+      dayInput.value = formatLocalDate(d);
+      load(dayInput.value);
+    }
+
+    dayInput.addEventListener('change', () => load(dayInput.value));
+    document.getElementById('prev').addEventListener('click', () => shiftDay(-1));
+    document.getElementById('next').addEventListener('click', () => shiftDay(+1));
+
+    dayInput.value = formatLocalDate(new Date());
+    load(dayInput.value);
+  </script>
+</body>
+</html>

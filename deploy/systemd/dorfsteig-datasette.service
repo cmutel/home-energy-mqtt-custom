@@ -1,0 +1,24 @@
+[Unit]
+Description=Dorfsteig Datasette server (behind nginx at /datasette/)
+Documentation=https://github.com/cmutel/home-energy-mqtt-custom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cmutel
+WorkingDirectory=/home/cmutel/dorfsteig
+ExecStart=/home/cmutel/dorfsteig/.venv/bin/datasette \
+    /home/cmutel/.local/share/dorfsteig/dorfsteig.sqlite \
+    --metadata datasette.yml \
+    --setting max_returned_rows 1500 \
+    --setting base_url /datasette/ \
+    --host 127.0.0.1 \
+    --port 8001
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

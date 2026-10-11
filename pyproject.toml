@@ -1,0 +1,90 @@
+[project]
+name = "dorfsteig"
+version = "0.1.0"
+description = "Home energy monitoring and heating control for Dorfsteig"
+readme = "README.md"
+authors = [
+    { name = "Chris Mutel", email = "cmutel@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "paho-mqtt>=2.1.0",
+    "platformdirs>=4.9.6",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+# Dashboards over the SQLite database
+datasette = [
+    "datasette>=0.65",
+]
+# Forecasting and model training; not needed for control or ingest
+ml = [
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+]
+
+[project.scripts]
+dorfsteig-ingest = "dorfsteig_ingest.cli:main"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.1",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/dorfsteig_core",
+    "src/dorfsteig_ingest",
+    "src/dorfsteig_control",
+    "src/dorfsteig_forecast",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+extend-exclude = ["firmware"]  # MicroPython, matches what is on the boards
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "TID252"]  # TID252: ban relative imports
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
+
+# Library boundaries. Run with: uv run lint-imports
+[tool.importlinter]
+root_packages = [
+    "dorfsteig_core",
+    "dorfsteig_ingest",
+    "dorfsteig_control",
+    "dorfsteig_forecast",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core depends on no other dorfsteig library"
+type = "forbidden"
+source_modules = ["dorfsteig_core"]
+forbidden_modules = ["dorfsteig_ingest", "dorfsteig_control", "dorfsteig_forecast"]
+
+[[tool.importlinter.contracts]]
+name = "Control runs without forecast or ingest (plans are exchanged via SQLite)"
+type = "forbidden"
+source_modules = ["dorfsteig_control"]
+forbidden_modules = ["dorfsteig_forecast", "dorfsteig_ingest"]
+
+[[tool.importlinter.contracts]]
+name = "Ingest and forecast only depend on core"
+type = "forbidden"
+source_modules = ["dorfsteig_ingest", "dorfsteig_forecast"]
+forbidden_modules = ["dorfsteig_control"]

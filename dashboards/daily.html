@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Daily Energy — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; }
+    nav { margin-bottom: 16px; }
+    nav a {
+      display: inline-block; padding: 6px 14px; margin-right: 6px;
+      background: white; border-radius: 4px; text-decoration: none;
+      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
+    }
+    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
+    nav a:hover:not(.active) { background: #e8e8e8; }
+    .controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+      background: white; padding: 12px 16px; border-radius: 6px;
+    }
+    .controls label { font-weight: bold; }
+    input[type=date] { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button {
+      font-size: 1rem; padding: 4px 14px; cursor: pointer;
+      border: 1px solid #ccc; border-radius: 4px; background: white;
+    }
+    button:hover { background: #e8e8e8; }
+    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
+    #chart  { background: white; border-radius: 6px; padding: 8px; margin-bottom: 16px; }
+    #totals { background: white; border-radius: 6px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="daily.html" class="active">Daily consumption</a>
+    <a href="power.html">Solar &amp; grid</a>
+    <a href="climate.html">Air quality</a>
+  </nav>
+  <h1>Daily Energy Consumption</h1>
+  <div class="controls">
+    <label for="day">Day</label>
+    <button id="prev">&#9664;</button>
+    <input type="date" id="day" value="">
+    <button id="next">&#9654;</button>
+    <span id="status"></span>
+  </div>
+  <div id="chart"></div>
+  <div id="totals"></div>
+
+  <script>
+    const API = '/datasette';
+
+    // Channels grouped for legend organisation.
+    // Click a group title to toggle the whole group; click individual items to toggle one line.
+    const GROUPS = {
+      'Mains':      ['mains_a', 'mains_b'],
+      'Heating':    ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'],
+      'Appliances': ['oven', 'stovetop', 'clothes_washer', 'clothes_dryer', 'water_heater', 'dishwasher'],
+    };
+
+    const LABELS = {
+      zone_a: 'Kitchen / bathroom / dining room',
+      zone_b: 'Hallway / living room / entrance / outside',
+      zone_c: 'Upstairs bathroom / parents / playroom south',
+      zone_d: 'Upstairs hallway',
+      zone_e: 'Kids bedroom / playroom north / balcony',
+    };
+
+    const CHANNELS = Object.entries(GROUPS).flatMap(([group, names]) =>
+      names.map(name => ({ name, group }))
+    );
+
+    const dayInput = document.getElementById('day');
+    const status   = document.getElementById('status');
+
+    async function load(day) {
+      status.textContent = 'Loading…';
+      const cols = CHANNELS.map(c => c.name).join(', ');
+      const sql = `
+        SELECT datetime(ts, 'unixepoch', 'localtime') AS time, ${cols}
+        FROM iotawatt_readings
+        WHERE date(ts, 'unixepoch', 'localtime') = '${day}'
+        ORDER BY ts
+      `;
+      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
+
+      let rows;
+      try {
+        const resp = await fetch(url);
+        rows = await resp.json();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        return;
+      }
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        status.textContent = 'No data for this day.';
+        Plotly.purge('chart');
+        Plotly.purge('totals');
+        return;
+      }
+
+      const times = rows.map(r => r.time);
+
+      const HIDDEN_BY_DEFAULT = new Set(['mains_a', 'mains_b']);
+
+      const traces = CHANNELS.map(({ name }) => ({
+        x: times,
+        y: rows.map(r => r[name]),
+        name: LABELS[name] ?? name.replace(/_/g, '\u00a0'),
+        type: 'scatter',
+        mode: 'lines',
+        line: { width: 1.5 },
+        visible: HIDDEN_BY_DEFAULT.has(name) ? 'legendonly' : true,
+        hovertemplate: '%{y:.0f} W<extra>%{fullData.name}</extra>',
+      }));
+
+      Plotly.react('chart', traces, {
+        xaxis: { type: 'date', title: 'Time' },
+        yaxis: { title: 'Power (W)', rangemode: 'tozero' },
+        legend: {},
+        hovermode: 'x unified',
+        margin: { t: 20, r: 20, b: 60, l: 70 },
+        height: 580,
+      });
+
+      renderTotals(rows);
+      status.textContent = `${rows.length} readings`;
+    }
+
+    // Sum watts over all one-minute readings → Wh (÷60), display as kWh
+    const TOTALS = [
+      { label: 'Heating',       fields: ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'] },
+      { label: 'Water heater',  fields: ['water_heater'] },
+      { label: 'Clothes dryer', fields: ['clothes_dryer'] },
+      { label: 'Oven',          fields: ['oven'] },
+      { label: 'Clothes washer',fields: ['clothes_washer'] },
+      { label: 'Dishwasher',    fields: ['dishwasher'] },
+      { label: 'Stovetop',      fields: ['stovetop'] },
+    ];
+
+    function renderTotals(rows) {
+      const entries = TOTALS.map(({ label, fields }) => {
+        const wh = rows.reduce((sum, r) => sum + fields.reduce((s, f) => s + (r[f] || 0), 0), 0) / 60;
+        return { label, kwh: wh / 1000 };
+      }).sort((a, b) => b.kwh - a.kwh);
+
+      Plotly.react('totals', [{
+        type: 'bar',
+        orientation: 'h',
+        x: entries.map(e => e.kwh),
+        y: entries.map(e => e.label),
+        text: entries.map(e => `${e.kwh.toFixed(2)} kWh`),
+        textposition: 'outside',
+        hovertemplate: '%{x:.3f} kWh<extra>%{y}</extra>',
+        marker: { color: '#4c78a8' },
+      }], {
+        xaxis: { title: 'kWh', rangemode: 'tozero' },
+        margin: { t: 20, r: 100, b: 50, l: 120 },
+        height: 300,
+      });
+    }
+
+    function formatLocalDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function shiftDay(delta) {
+      const d = new Date(dayInput.value + 'T00:00:00');
+      d.setDate(d.getDate() + delta);
+      dayInput.value = formatLocalDate(d);
+      load(dayInput.value);
+    }
+
+    dayInput.addEventListener('change', () => load(dayInput.value));
+    document.getElementById('prev').addEventListener('click', () => shiftDay(-1));
+    document.getElementById('next').addEventListener('click', () => shiftDay(+1));
+
+    dayInput.value = formatLocalDate(new Date());
+    load(dayInput.value);
+  </script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# uv
+.venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.import_linter_cache/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Data and secrets
+*.sqlite
+*.sqlite-*
+*.db
+.env
+firmware/esp32/wifi_config.py
+notebooks/.ipynb_checkpoints/
