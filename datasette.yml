@@ -88,33 +88,33 @@ plugins:
           db: dorfsteig
           query: >
             SELECT time, channel, watts FROM (
-              SELECT datetime(ts, 'unixepoch', 'localtime') AS time, 'mains_a'        AS channel, mains_a        AS watts FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime') AS time, 'mains_a'        AS channel, mains_a        AS watts FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'mains_b',                  mains_b        FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'mains_b',                  mains_b        FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'oven',                     oven           FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'oven',                     oven           FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_a',                   zone_a         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_a',                   zone_a         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_b',                   zone_b         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_b',                   zone_b         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_c',                   zone_c         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_c',                   zone_c         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_d',                   zone_d         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_d',                   zone_d         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_e',                   zone_e         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_e',                   zone_e         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_f',                   zone_f         FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_f',                   zone_f         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_washer',           clothes_washer FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_washer',           clothes_washer FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_dryer',            clothes_dryer  FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_dryer',            clothes_dryer  FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'water_heater',             water_heater   FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'water_heater',             water_heater   FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'dishwasher',               dishwasher     FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'dishwasher',               dishwasher     FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'stovetop',                 stovetop       FROM iotawatt_readings WHERE date(ts, 'unixepoch', 'localtime') = :day
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'stovetop',                 stovetop       FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
             ) ORDER BY time, channel
           library: vega-lite
           display:

@@ -70,7 +70,8 @@
           g.export_total                            AS grid_export_total
         FROM inverter_readings i
         LEFT JOIN grid_readings g ON i.ts = g.ts
-        WHERE date(i.ts, 'unixepoch', 'localtime') = '${day}'
+        WHERE i.ts >= CAST(strftime('%s', '${day}', 'utc') AS INTEGER)
+        AND i.ts < CAST(strftime('%s', '${day}', '+1 day', 'utc') AS INTEGER)
         ORDER BY i.ts
       `;
       const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;

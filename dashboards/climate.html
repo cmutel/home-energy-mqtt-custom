@@ -64,7 +64,8 @@
           datetime(ts, 'unixepoch', 'localtime') AS time,
           room, temperature, humidity, pm25, pm10
         FROM air_quality
-        WHERE date(ts, 'unixepoch', 'localtime') = '${day}'
+        WHERE ts >= CAST(strftime('%s', '${day}', 'utc') AS INTEGER)
+        AND ts < CAST(strftime('%s', '${day}', '+1 day', 'utc') AS INTEGER)
         ORDER BY ts
       `;
       const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;

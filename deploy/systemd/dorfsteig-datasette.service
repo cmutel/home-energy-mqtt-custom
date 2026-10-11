@@ -12,6 +12,7 @@ ExecStart=/home/cmutel/dorfsteig/.venv/bin/datasette \
     /home/cmutel/.local/share/dorfsteig/dorfsteig.sqlite \
     --metadata datasette.yml \
     --setting max_returned_rows 1500 \
+    --setting sql_time_limit_ms 20000 \
     --setting base_url /datasette/ \
     --host 127.0.0.1 \
     --port 8001
