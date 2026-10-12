@@ -11,13 +11,11 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
-# IoTaWatt channels. Zone C and the washer are on the upstairs panel; the rest
-# are behind the downstairs mains.
-UPSTAIRS_CHANNELS = ("zone_c", "clothes_washer")
+# IoTaWatt channels, all on the downstairs panel
 CIRCUITS = {
     "zone_a": "Zone A (kitchen, bath, dining)",
     "zone_b": "Zone B (hall, living, entrance)",
-    "zone_c": "Zone C (bath up, parents, playroom S) ↑",
+    "zone_c": "Zone C (bath up, parents, playroom S)",
     "zone_d": "Zone D (upstairs hallway)",
     "zone_e": "Zone E (kids, playroom N, balcony)",
     "zone_f": "Zone F",
@@ -25,12 +23,12 @@ CIRCUITS = {
     "oven": "Oven",
     "stovetop": "Stovetop",
     "dishwasher": "Dishwasher",
-    "clothes_washer": "Washer ↑",
+    "clothes_washer": "Washer",
     "clothes_dryer": "Dryer",
 }
 DOWNSTAIRS_OTHER = "Downstairs other"
-UPSTAIRS_WATER = "Water heater upstairs (est.) ↑"
-UPSTAIRS_OTHER = "Upstairs other ↑"
+UPSTAIRS_WATER = "Water heater upstairs (est.)"
+UPSTAIRS_OTHER = "Upstairs other"
 
 
 @dataclass
@@ -92,8 +90,7 @@ def daily_report(conn: sqlite3.Connection, day: date) -> Report:
             channels_wh = {c: wh or 0 for c, wh in zip(CIRCUITS, measured)}
             hour.update({CIRCUITS[c]: wh for c, wh in channels_wh.items()})
             if down is not None:
-                on_mains = sum(wh for c, wh in channels_wh.items() if c not in UPSTAIRS_CHANNELS)
-                hour[DOWNSTAIRS_OTHER] = down - on_mains
+                hour[DOWNSTAIRS_OTHER] = down - sum(channels_wh.values())
         if up_water is not None and up_other is not None:
             hour[UPSTAIRS_WATER] = up_water
             hour[UPSTAIRS_OTHER] = up_other
@@ -122,6 +119,6 @@ def format_report(r: Report) -> str:
     circuits = [(name, kwh, cost) for name, (kwh, cost) in circuits if abs(kwh) >= 0.05]
     if circuits:
         lines.append("")
-        lines.append("Usage by circuit, kWh · CHF (↑ upstairs panel)")
+        lines.append("Usage by circuit, kWh · CHF")
         lines += [f"{kwh:5.1f} · {cost:4.2f}  {name}" for name, kwh, cost in circuits]
     return "\n".join(lines)

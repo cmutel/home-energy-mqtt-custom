@@ -13,16 +13,16 @@ from dorfsteig_core.notify import Notifier
 
 
 def add_hour(conn, ts: int, high: bool):
-    """1.5 kWh used (1 kWh downstairs, 0.5 kWh upstairs), 1 kWh PV of which 0.4 kWh exported."""
+    """1.5 kWh used (1.2 kWh downstairs, 0.3 kWh upstairs), 1 kWh PV of which 0.4 kWh exported."""
     price, export_price = (0.2727, 0.0963) if high else (0.2511, 0.0923)
     conn.execute(
         "INSERT INTO energy_hourly (ts, pv_wh, import_wh, export_wh, house_wh, downstairs_wh, "
         "downstairs_water_wh, upstairs_wh, upstairs_water_wh, upstairs_other_wh, high_tariff, "
         "import_price, export_price, import_chf, export_chf, grid_minutes, iotawatt_minutes) "
-        "VALUES (?, 1000, 900, 400, 1500, 1000, 600, 500, 0, 300, ?, ?, ?, ?, ?, 60, 60)",
+        "VALUES (?, 1000, 900, 400, 1500, 1200, 600, 300, 0, 300, ?, ?, ?, ?, ?, 60, 60)",
         (ts, int(high), price, export_price, 0.9 * price, 0.4 * export_price),
     )
-    # Downstairs: water heater 600 W, zone A 300 W, rest unmeasured; upstairs: washer 200 W
+    # Downstairs: mains 1000 W (water heater 600 W, zone A 300 W) + washer 200 W on the third phase
     conn.executemany(
         "INSERT INTO iotawatt_readings (ts, mains_a, mains_b, water_heater, zone_a, clothes_washer) "
         "VALUES (?, 1000, 0, 600, 300, 200)", [(ts + m * 60,) for m in range(60)],
@@ -49,9 +49,9 @@ def test_report_costs_all_usage_and_keeps_revenue_separate(conn):
     kwh = {name: v[0] for name, v in r.circuits.items()}
     assert kwh["Water heater downstairs"] == pytest.approx(1.2)
     assert kwh["Zone A (kitchen, bath, dining)"] == pytest.approx(0.6)
-    assert kwh["Downstairs other"] == pytest.approx(0.2)         # washer isn't on the downstairs mains
-    assert kwh["Washer ↑"] == pytest.approx(0.4)
-    assert kwh["Upstairs other ↑"] == pytest.approx(0.6)
+    assert kwh["Washer"] == pytest.approx(0.4)
+    assert kwh["Downstairs other"] == pytest.approx(0.2)
+    assert kwh["Upstairs other"] == pytest.approx(0.6)
     assert sum(kwh.values()) == pytest.approx(r.house_kwh)
     assert sum(v[1] for v in r.circuits.values()) == pytest.approx(r.usage_chf)
     text = format_report(r)

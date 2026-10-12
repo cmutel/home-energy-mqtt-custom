@@ -64,8 +64,9 @@
     <div class="panel"><h2>Money</h2><table id="costs"></table></div>
   </div>
   <p class="note">
-    Whole-house figures come from the grid meter and inverter (MBMD), the downstairs panel from IoTaWatt;
-    upstairs is the difference. Zone C and the clothes washer are on the upstairs panel. The upstairs water heater isn't measured: it's estimated from 1498&nbsp;W
+    Whole-house figures come from the grid meter and inverter (MBMD), the downstairs panel from IoTaWatt
+    (mains A + B, plus zone C and the washer, which are on the third phase);
+    upstairs is the difference. The upstairs water heater isn't measured: it's estimated from 1498&nbsp;W
     switching steps, so treat daily values as approximate. High tariff: Mon–Fri 07–20, Sat 07–13, except
     public holidays. Costs only for years with prices (2026 onwards). Hours without data are missing
     from the totals.
@@ -107,7 +108,6 @@
           SUM(downstairs_water_wh) / 1000.0 AS down_water,
           SUM(upstairs_wh) / 1000.0 AS up,
           SUM(upstairs_water_wh) / 1000.0 AS up_water,
-          SUM(upstairs_other_wh) / 1000.0 AS up_other,
           SUM(CASE WHEN high_tariff THEN import_chf END) AS import_chf_ht,
           SUM(CASE WHEN NOT high_tariff THEN import_chf END) AS import_chf_nt,
           SUM(export_chf) AS export_chf,
@@ -147,8 +147,7 @@
         downWater: r.down_water ?? 0,
         downOther: down - (r.down_water ?? 0),
         upWater: r.up_water ?? 0,
-        upMeasured: up - (r.up_water ?? 0) - (r.up_other ?? 0),   // zone C and the washer
-        upOther: r.up_other ?? 0,
+        upOther: up - (r.up_water ?? 0),
         unsplit: Math.max(0, (r.house ?? 0) - down - up),
       };
     }
@@ -164,7 +163,6 @@
         bar('Downstairs water heater', 'downWater', '#9ecae9'),
         bar('Downstairs other', 'downOther', '#4c78a8'),
         bar('Upstairs water heater (est.)', 'upWater', '#ffbf79'),
-        bar('Upstairs zone C + washer', 'upMeasured', '#e7ba52'),
         bar('Upstairs other', 'upOther', '#f58518'),
         bar('Not split (no IoTaWatt data)', 'unsplit', '#bab0ac'),
         { x, y: rows.map(r => r.pv), name: 'PV generation', type: 'scatter', mode: 'lines+markers',
@@ -209,7 +207,6 @@
         ['&nbsp;&nbsp;Downstairs water heater', kwh(parts.downWater)],
         ['&nbsp;&nbsp;Downstairs other', kwh(parts.downOther)],
         ['&nbsp;&nbsp;Upstairs water heater (est.)', kwh(parts.upWater)],
-        ['&nbsp;&nbsp;Upstairs zone C + washer', kwh(parts.upMeasured)],
         ['&nbsp;&nbsp;Upstairs other', kwh(parts.upOther)],
         ['&nbsp;&nbsp;Not split', kwh(parts.unsplit)],
         ['Self-consumed PV', kwh(selfUse)],
