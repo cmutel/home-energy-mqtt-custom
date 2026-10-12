@@ -183,7 +183,11 @@ less (54 vs 69 kWh on the 83 days with water data).
 - Later, with water temperature sensors: replace "full" detection and the
   deficit estimate with the measured temperature.
 
-#### 3d. Storage heaters on PV surplus
+#### 3d. Storage heaters on PV surplus (code done 2026-10-12)
+
+- [x] Fit mode in `engine.fit_rooms`, modes legacy / shadow / fit on the
+      Solar page; temperature limit 15 °C on today's mean (station + ICON-CH2).
+- [ ] Shadow for a few sunny days, then fit.
 
 - Only when it's cold enough to want heat: outdoor temperature (daily mean
   or forecast) below a heating limit, ~15 °C, to be tuned.
@@ -196,7 +200,11 @@ less (54 vs 69 kWh on the 83 days with water data).
 - Heaters that draw nothing when switched on (disabled by hand, or core
   full) are skipped for a while; this also feeds the wattage estimates.
 
-#### 3e. Rollout
+#### 3e. Rollout (code done 2026-10-12)
+
+- [x] Status page: water/space heating split and sparklines, outdoor
+      temperature and room heater decision, data source lights.
+- [x] Morning report: heating line (water measured, space at most, PV share).
 
 - Each part runs in shadow mode first (logs what it would do, alongside the
   live controller), then goes live with a switch on the Solar page.

@@ -23,6 +23,18 @@ aside, other rules still apply; between steps 1 and 2 the water step switches
 them on PV surplus, backup and safety. Room heaters then only get surplus
 once every water heater is on, and are shed first.
 
+Fit mode for room heaters (`solar.mode == "fit"`) replaces step 2:
+- only if today's mean outdoor temperature is below `temp_limit`; otherwise
+  (or if it's unknown) PV room heaters are switched off;
+- import beyond `fast_shed_w`, or beyond `fit_off_import_w` once on for
+  `min_on_s`: switch off the lowest-priority PV heater;
+- otherwise, once the last switch has settled and the water heaters are
+  served, switch on the highest-priority heater that's off, not skipped and
+  fits the smoothed export minus `margin_w` (a smaller one further down may
+  fill a gap a bigger one doesn't fit). One per `settle_s`, so the
+  controller can see whether it draws (see service.check_room_loads); one
+  that doesn't is skipped for `no_load_skip_s` and switched off here.
+
 Overrides (used by the wattage test) force a heater on or off and take it out
 of steps 1–2 until the override is removed. `hold_solar` pauses step 2 so a
 measurement isn't disturbed by other heaters switching.
@@ -79,6 +91,9 @@ def decide(
     overrides: Mapping[str, bool] | None = None,
     hold_solar: bool = False,
     water_full: Mapping[str, float] | None = None,
+    outdoor_mean: float | None = None,
+    watts: Mapping[str, float] | None = None,
+    room_skip: Mapping[str, float] | None = None,
 ) -> tuple[States, list[Event]]:
     overrides = overrides or {}
     water = config.water
@@ -160,6 +175,9 @@ def decide(
             switch(heater, False, None, "stale data")
     elif grid.power is None or hold_solar:
         pass
+    elif solar.mode == "fit":
+        fit_rooms(new, solar, ts, grid, solar_on, water_ready, outdoor_mean, watts or {}, room_skip or {},
+                  overrides, switch)
     elif grid.power > solar.export_on_w and water_ready:
         for heater in solar.priority:
             state = new[heater]
@@ -173,3 +191,36 @@ def decide(
                 break
 
     return new, events
+
+
+def fit_rooms(new: States, solar, ts: float, grid: GridSample, solar_on: list[str], water_ready: bool,
+              outdoor_mean: float | None, watts: Mapping[str, float], room_skip: Mapping[str, float],
+              overrides: Mapping[str, bool], switch) -> None:
+    """Fit mode for room heaters; see the module docstring."""
+    if outdoor_mean is None or outdoor_mean >= solar.temp_limit:
+        why = "no temperature" if outdoor_mean is None else "too warm"
+        for heater in solar_on:
+            switch(heater, False, None, why)
+        return
+    for heater in solar_on:
+        if room_skip.get(heater, 0) > ts:
+            switch(heater, False, None, "no load")
+    solar_on = [h for h in solar_on if new[h].on]
+    g = grid.average if grid.average is not None else grid.power
+    if g < -solar.fit_off_import_w:
+        for heater in reversed(solar_on):
+            if g < -solar.fast_shed_w or ts - new[heater].since >= solar.min_on_s:
+                switch(heater, False, None, "import")
+                break
+        return
+    last = max((new[h].since for h in solar.priority), default=0.0)
+    if not water_ready or ts - last < solar.settle_s:
+        return
+    for heater in solar.priority:
+        state = new[heater]
+        if (heater in overrides or state.on or room_skip.get(heater, 0) > ts
+                or ts - state.since < solar.min_off_s):
+            continue
+        if watts.get(heater, 2000.0) <= g - solar.margin_w:
+            switch(heater, True, "solar", "export")
+            return

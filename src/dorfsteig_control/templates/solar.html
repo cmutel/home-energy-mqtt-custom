@@ -27,13 +27,27 @@ boosts still work. Shadow mode only logs what PV mode would do (History, dry run
 <small class="muted">(relay on for {{ (water.full_after_s / 60) | int }} min without drawing; upstairs is estimated)</small></p>
 
 <h2>PV surplus switching (room heaters)</h2>
-<p class="muted">Each tick (20 s): above the export threshold the next heater in the priority list is switched on;
-below the import threshold the last one switched on by PV is switched off. Grid power is positive when exporting.</p>
+<p class="muted"><strong>Fit:</strong> only while today's mean outdoor temperature is below the limit. Once the water heaters are served,
+the highest-priority heater that fits the export minus {{ solar.margin_w | int }} W goes on, one per minute; a heater that then draws
+nothing (switched off by hand, or core full) is skipped for {{ (solar.no_load_skip_s / 60) | int }} min. Above {{ solar.fit_off_import_w | int }} W
+import the lowest-priority one goes off after at least {{ (solar.min_on_s / 60) | int }} min, above {{ solar.fast_shed_w | int }} W at once.
+<strong>Legacy:</strong> above the export threshold the next heater in the list goes on, below the import threshold the last one goes off.
+<strong>Shadow:</strong> legacy, logging what fit would do (History, dry run). Grid power is positive when exporting.</p>
+<p>Today's mean outdoor temperature: {% if outdoor[0] is none %}<strong>unknown</strong> ({{ outdoor[1] }}){% else %}<strong>{{ "%.1f" | format(outdoor[0]) }} °C</strong>
+<small class="muted">({{ outdoor[1] }})</small>{% endif %}
+{% if room_skip %}· Skipped (drew nothing): {% for h, until in room_skip.items() %}{{ by_id[h].name }} until {{ until | ts("%H:%M") }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
 <form method="post" action="{{ prefix }}/solar">
   <label><input type="checkbox" role="switch" name="enabled" value="true" {% if solar.enabled %}checked{% endif %}> Switch heaters on PV surplus</label>
   <div class="grid">
-    <label>Add a heater above export of (W)<input type="number" name="export_on_w" value="{{ solar.export_on_w | int }}" step="50"></label>
-    <label>Remove a heater below (W, negative = import)<input type="number" name="import_off_w" value="{{ solar.import_off_w | int }}" step="50"></label>
+    <label>Mode<select name="mode">
+      {% for value, label in [("legacy", "Legacy thresholds"), ("shadow", "Shadow: log what fit would do"), ("fit", "Fit to surplus, below the temperature limit")] %}
+      <option value="{{ value }}" {% if solar.mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+    <label>Temperature limit (°C, today's mean)<input type="number" name="temp_limit" value="{{ solar.temp_limit }}" step="0.5"></label>
+  </div>
+  <div class="grid">
+    <label>Legacy: add a heater above export of (W)<input type="number" name="export_on_w" value="{{ solar.export_on_w | int }}" step="50"></label>
+    <label>Legacy: remove a heater below (W, negative = import)<input type="number" name="import_off_w" value="{{ solar.import_off_w | int }}" step="50"></label>
   </div>
   <div class="grid">
     <label>Minimum time between switches of a heater (s)<input type="number" name="min_switch_interval_s" value="{{ solar.min_switch_interval_s | int }}" min="0"></label>

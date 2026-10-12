@@ -70,19 +70,38 @@ LEGACY_SOLAR_PRIORITY = [
 ]
 
 
-class SolarParams(_Model):
-    """Thresholds for switching heaters on PV surplus.
+SolarMode = Literal["legacy", "shadow", "fit"]
 
-    Grid power is positive when exporting. The defaults match the legacy
-    controller: add one heater above 1500 W export, remove one below 200 W import.
+
+class SolarParams(_Model):
+    """Switching room (storage) heaters on PV surplus.
+
+    Grid power is positive when exporting. Modes:
+    legacy: add one heater above `export_on_w` export, remove one below
+        `import_off_w`, as the legacy controller did.
+    shadow: legacy, while logging what fit mode would do.
+    fit: see engine.py; only below `temp_limit` (today's mean outdoor
+        temperature), heaters that fit the surplus, never charging from the grid.
     """
 
     enabled: bool = True
+    mode: SolarMode = "legacy"
     priority: list[str] = Field(default_factory=lambda: list(LEGACY_SOLAR_PRIORITY))
     export_on_w: float = 1500
     import_off_w: float = -200
     min_switch_interval_s: float = 120   # minimum time between switches of one heater
     stale_after_s: float = 120           # shed solar heaters if no grid reading this long
+
+    # Fit mode
+    temp_limit: float = 15.0             # °C, today's mean outdoor temperature
+    margin_w: float = 100                # export beyond a heater's power needed to switch it on
+    fit_off_import_w: float = 200        # import tolerated before shedding a heater
+    fast_shed_w: float = 1000            # import above which a heater is shed regardless of min_on_s
+    min_on_s: float = 600
+    min_off_s: float = 600
+    settle_s: float = 60                 # one switch-on per settle_s, so its effect can be seen
+    no_load_w: float = 300               # a switch-on that moves the grid less than this drew nothing
+    no_load_skip_s: float = 3600         # skip such a heater (off by hand, or core full) this long
 
     @field_validator("priority")
     @classmethod

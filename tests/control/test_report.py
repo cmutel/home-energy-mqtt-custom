@@ -84,3 +84,14 @@ def test_morning_report_sent_once(conn):
     monitor_at(6, 0)
     monitor_at(6, 5)
     assert sent == ["Energy Mon 12 Oct"]
+
+
+def test_report_includes_heating(conn):
+    from dorfsteig_control.engine import Event
+    day = date(2026, 10, 12)
+    add_hour(conn, int(datetime(2026, 10, 12, 10).timestamp()), high=True)
+    ten, eleven = (datetime(2026, 10, 12, h).timestamp() for h in (10, 11))
+    Store(conn).log_events([Event(ten, "living_room", True, "export", 2000),
+                            Event(eleven, "living_room", False, "import", -300)])
+    text = format_report(daily_report(conn, day))
+    assert "Heating: water 0.0 kWh (0.0 from PV), space ≤2.0 kWh (2.0 from PV)" in text

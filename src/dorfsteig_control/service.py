@@ -22,7 +22,7 @@ from pathlib import Path
 import aiomqtt
 import uvicorn
 
-from dorfsteig_control import water, wattage
+from dorfsteig_control import outdoor, water, wattage
 from dorfsteig_control.config import ControlConfig, from_legacy
 from dorfsteig_control.engine import GridSample, States, decide
 from dorfsteig_control.heaters import BY_ID, HEATERS
@@ -93,6 +93,14 @@ class Controller:
         self.water_full = store.load_water_full()
         self.shadow_states: States | None = None
 
+        # Room heaters in fit mode (engine.fit_rooms)
+        self.watts: dict[str, float] = {}
+        self.outdoor_mean: float | None = None
+        self.outdoor_source = "not checked yet"
+        self.outdoor_checked = 0.0
+        self.room_skip: dict[str, float] = {}       # heater → skip until (drew nothing when switched on)
+        self.load_checks: list[wattage.PendingSwitch] = []
+
     # ---- inputs
 
     def on_grid_power(self, power: float) -> None:
@@ -125,9 +133,12 @@ class Controller:
         recent = self.history.window(now.timestamp() - 60, now.timestamp() + 1)
         grid = GridSample(power=self.grid_power, age_s=now.timestamp() - self.grid_ts,
                           average=sum(recent) / len(recent) if recent else None)
+        self.refresh_inputs(now)
         self.states, events = decide(self.states, self.config, now, grid, overrides=self.overrides,
-                                     hold_solar=self.hold_solar, water_full=self.water_full)
-        self.shadow_water(now, grid)
+                                     hold_solar=self.hold_solar, water_full=self.water_full,
+                                     outdoor_mean=self.outdoor_mean, watts=self.watts,
+                                     room_skip=self.room_skip)
+        self.run_shadow(now, grid)
 
         for e in events:
             log.info("%s%s %s (%s, grid %s W)", "[dry run] " if self.dry_run else "",
@@ -136,6 +147,8 @@ class Controller:
             self.switch_times.append(e.ts)
             if e.reason != "override":
                 self.pending_switches.append(wattage.PendingSwitch(e.ts, e.heater, e.on))
+            if e.on and e.reason == "export" and self.config.solar.mode == "fit":
+                self.load_checks.append(wattage.PendingSwitch(e.ts, e.heater, e.on))
         if events:
             self.store.log_events(events, dry_run=self.dry_run)
             if not self.dry_run:
@@ -145,24 +158,71 @@ class Controller:
             self.compare_with_legacy()
         self.last_tick = now.timestamp()
 
-    def shadow_water(self, now: datetime, grid: GridSample) -> None:
-        """In shadow mode, run the water PV logic on a copy of the states and log what it would do."""
-        water = self.config.water
-        if water.mode != "shadow":
+    def run_shadow(self, now: datetime, grid: GridSample) -> None:
+        """Run the new logic for heaters in shadow mode on a copy of their states; log what it would do.
+
+        For room heaters the grid is adjusted by the power of heaters that are on
+        in the shadow but not for real (and the other way round), so the shadow
+        sees roughly the export it would have caused. Water heaters only draw
+        when their thermostat wants, so they're left out of that adjustment.
+        """
+        water, solar = self.config.water, self.config.solar
+        shadowed = (set(water.heaters) if water.mode == "shadow" else set()) | \
+                   (set(solar.priority) if solar.mode == "shadow" else set())
+        if not shadowed:
             self.shadow_states = None
             return
         if self.shadow_states is None:
             self.shadow_states = dict(self.states)
-        states = {**self.states, **{h: self.shadow_states[h] for h in water.heaters}}
-        config = self.config.model_copy(update={"water": water.model_copy(update={"mode": "pv"})})
-        states, events = decide(states, config, now, grid, overrides=self.overrides,
-                                hold_solar=True, water_full=self.water_full)
+        states = {**self.states, **{h: self.shadow_states[h] for h in shadowed}}
+        rooms = shadowed - set(water.heaters)
+        delta = sum(self.watts.get(h, 0.0) * (int(self.states[h].on) - int(states[h].on)) for h in rooms)
+        shifted = GridSample(
+            power=None if grid.power is None else grid.power + delta, age_s=grid.age_s,
+            average=None if grid.average is None else grid.average + delta)
+        config = self.config.model_copy(update={
+            "water": water.model_copy(update={"mode": "pv" if water.mode == "shadow" else water.mode}),
+            "solar": solar.model_copy(update={"mode": "fit" if solar.mode == "shadow" else solar.mode}),
+        })
+        states, events = decide(states, config, now, shifted, overrides=self.overrides,
+                                water_full=self.water_full, outdoor_mean=self.outdoor_mean,
+                                watts=self.watts, room_skip=self.room_skip)
         self.shadow_states = states
-        events = [e for e in events if e.heater in water.heaters]
+        events = [e for e in events if e.heater in shadowed]
         for e in events:
-            log.info("[water shadow] %s %s (%s)", "ON " if e.on else "OFF", BY_ID[e.heater].name, e.reason)
+            log.info("[shadow] %s %s (%s)", "ON " if e.on else "OFF", BY_ID[e.heater].name, e.reason)
         if events:
             self.store.log_events(events, dry_run=True)
+
+    def refresh_inputs(self, now: datetime) -> None:
+        """Slow-changing inputs for the engine: wattages and today's mean outdoor temperature."""
+        self.watts = {h.id: wattage.estimated_watts(self.store.conn, h.id)[0] for h in HEATERS}
+        if now.timestamp() - self.outdoor_checked > 600:
+            self.outdoor_mean, self.outdoor_source = outdoor.today_mean(self.store.conn, now)
+            self.outdoor_checked = now.timestamp()
+
+    def check_room_loads(self, ts: float) -> None:
+        """Room heaters switched on in fit mode: did the grid drop? If not, skip them for a while.
+
+        A storage heater draws nothing if it's switched off by hand or its core
+        is full. Only switches with no other switch nearby can be judged.
+        """
+        solar = self.config.solar
+        due = [p for p in self.load_checks if ts > p.ts + wattage.PASSIVE_AFTER[1]]
+        self.load_checks = [p for p in self.load_checks if p not in due]
+        for p in due:
+            if any(abs(t - p.ts) < wattage.PASSIVE_AFTER[1] and t != p.ts for t in self.switch_times):
+                continue
+            before = wattage.measure(self.history.window(p.ts + wattage.PASSIVE_BEFORE[0],
+                                                         p.ts + wattage.PASSIVE_BEFORE[1]))
+            after = wattage.measure(self.history.window(p.ts + wattage.PASSIVE_AFTER[0],
+                                                        p.ts + wattage.PASSIVE_AFTER[1]))
+            if before is None or after is None:
+                continue
+            if before.median - after.median < solar.no_load_w:
+                self.room_skip[p.heater] = p.ts + solar.no_load_skip_s
+                log.info("%s drew nothing when switched on; skipping it for %.0f min",
+                         BY_ID[p.heater].name, solar.no_load_skip_s / 60)
 
     def update_water_full(self) -> None:
         """Record tanks seen full: relay on for a while without drawing (from the real relays)."""
@@ -245,6 +305,7 @@ class Controller:
                 await self.notifier.send(f"Sensor {room} back", "Readings are arriving again.")
 
         await self.process_passive(ts)
+        self.check_room_loads(ts)
         try:
             self.update_water_full()
         except Exception:
@@ -319,6 +380,8 @@ class Controller:
             "grid": {"power": self.grid_power, "age_s": round(now - self.grid_ts, 1)},
             "pv": {"power": self.pv_power,
                    "age_s": None if self.pv_ts is None else round(now - self.pv_ts, 1)},
+            "outdoor": {"mean": self.outdoor_mean, "source": self.outdoor_source,
+                        "limit": self.config.solar.temp_limit, "mode": self.config.solar.mode},
             "heaters": [
                 {"id": h.id, "name": h.name, **asdict(self.states[h.id]),
                  "watts": wattage.estimated_watts(self.store.conn, h.id)[0]}

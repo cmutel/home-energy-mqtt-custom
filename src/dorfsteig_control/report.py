@@ -11,6 +11,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
+from dorfsteig_control.summary import DaySummary, day_summary
+
 # IoTaWatt channels, all on the downstairs panel
 CIRCUITS = {
     "zone_a": "Zone A (kitchen, bath, dining)",
@@ -43,6 +45,7 @@ class Report:
     import_chf: float | None = None  # what was actually bought from the grid
     export_chf: float | None = None  # PV export revenue
     circuits: dict[str, list[float]] = field(default_factory=dict)  # name → [kWh, CHF]
+    heating: DaySummary | None = None    # relay-controlled heaters (water measured, space at most)
 
 
 def _add(total: float | None, value: float | None) -> float | None:
@@ -71,6 +74,8 @@ def daily_report(conn: sqlite3.Connection, day: date) -> Report:
         }
     except sqlite3.OperationalError:
         return report
+    # Up to the end of the day, or now if the day isn't over (heaters still on don't count ahead)
+    report.heating = day_summary(conn, min(datetime.combine(day, time.max), datetime.now()))
 
     for (ts, pv, exp, imp, house, down, up_water, up_other, price, imp_chf, exp_chf) in hourly:
         if imp is not None:
@@ -115,6 +120,10 @@ def format_report(r: Report) -> str:
     ]
     if r.hours < 24:
         lines.append(f"Only {r.hours} of 24 hours have data")
+    if r.heating is not None and r.heating.heaters:
+        h = r.heating
+        lines.append(f"Heating: water {h.water_kwh:.1f} kWh ({h.water_solar_kwh:.1f} from PV), "
+                     f"space ≤{h.space_kwh:.1f} kWh ({h.space_solar_kwh:.1f} from PV)")
     circuits = sorted(r.circuits.items(), key=lambda kv: -kv[1][0])
     circuits = [(name, kwh, cost) for name, (kwh, cost) in circuits if abs(kwh) >= 0.05]
     if circuits:

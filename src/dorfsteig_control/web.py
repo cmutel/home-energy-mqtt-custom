@@ -231,7 +231,9 @@ def create_app(controller: Controller) -> FastAPI:
     @app.get(f"{PREFIX}/solar", response_class=HTMLResponse)
     async def solar(request: Request) -> HTMLResponse:
         return page(request, "solar.html", solar=controller.config.solar, water=controller.config.water,
-                    water_full=controller.water_full)
+                    water_full=controller.water_full,
+                    outdoor=(controller.outdoor_mean, controller.outdoor_source),
+                    room_skip={h: t for h, t in controller.room_skip.items() if t > time.time()})
 
     @app.post(f"{PREFIX}/solar/water")
     async def water_save(
@@ -249,9 +251,12 @@ def create_app(controller: Controller) -> FastAPI:
     async def solar_save(
         enabled: bool = Form(False), export_on_w: float = Form(), import_off_w: float = Form(),
         min_switch_interval_s: float = Form(), stale_after_s: float = Form(),
+        mode: str = Form("legacy"), temp_limit: float = Form(15.0),
     ) -> RedirectResponse:
         def change(c: ControlConfig) -> None:
             c.solar.enabled = enabled
+            c.solar.mode = mode
+            c.solar.temp_limit = temp_limit
             c.solar.export_on_w = export_on_w
             c.solar.import_off_w = import_off_w
             c.solar.min_switch_interval_s = min_switch_interval_s
