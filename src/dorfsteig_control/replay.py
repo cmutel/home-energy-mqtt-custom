@@ -319,3 +319,156 @@ def report(results: list[Result]) -> str:
                  f"({100 * r.months[month][1] / max(r.months[month][2], 1):3.0f}%)" for r in results[1:]]
         lines.append(f"  {month}  " + "   ".join(cells))
     return "\n".join(lines)
+
+
+# ---- storage heaters
+
+@dataclass
+class RoomPolicy:
+    """Storage heaters on PV surplus only, gated by the day's mean outdoor temperature.
+
+    Each tick, the highest-priority heaters that fit the smoothed surplus
+    (export + their own draw) minus `margin` are on; several can switch at
+    once. A heater's core takes at most `max_hours` of full power on a day at
+    `cold` °C, falling linearly to nothing at `temp_limit`; a full core draws
+    nothing. Import beyond `off_import` sheds the lowest-priority heater
+    straight away.
+    """
+
+    name: str
+    temp_limit: float = 15.0
+    cold: float = -5.0
+    max_hours: float = 8.0
+    margin: float = 100.0
+    off_import: float = 200.0
+    min_on_s: float = 600
+    min_off_s: float = 600
+
+    def capacity_wh(self, watts: float, mean_temp: float | None) -> float:
+        if mean_temp is None or mean_temp >= self.temp_limit:
+            return 0.0
+        share = min(1.0, (self.temp_limit - mean_temp) / (self.temp_limit - self.cold))
+        return watts * self.max_hours * share
+
+
+@dataclass
+class RoomResult:
+    policy: str
+    days: int = 0
+    heat_kwh: float = 0.0           # PV put into storage heaters
+    import_kwh: float = 0.0         # extra import caused by them
+    export_lost_chf: float = 0.0
+    import_chf: float = 0.0
+    switches: int = 0
+    months: dict[str, list[float]] = field(default_factory=dict)   # month → [heat kWh, CHF, days]
+
+
+def load_grid_days(conn: sqlite3.Connection, start: date, end: date) -> list[list[Minute]]:
+    """Days with grid data for at least MIN_COVERAGE of minutes, priced; demand left empty."""
+    first = int(datetime.combine(start, time(), TZ).timestamp())
+    last = int(datetime.combine(end + timedelta(days=1), time(), TZ).timestamp())
+    grid = dict(conn.execute("SELECT ts, power FROM grid_readings "
+                             "WHERE ts >= ? AND ts < ? AND power IS NOT NULL", (first, last)))
+    runs, current, day = [], [], start
+    while day <= end:
+        t0 = int(datetime.combine(day, time(), TZ).timestamp())
+        stamps = range(t0, t0 + 86400, 60)
+        prices = prices_for(day) or prices_for(date(2026, 1, 1))
+        if sum(ts in grid for ts in stamps) >= MIN_COVERAGE * len(stamps):
+            g_last = 0.0
+            for ts in stamps:
+                g_last = grid.get(ts, g_last)
+                local = datetime.fromtimestamp(ts, TZ)
+                high = is_high_tariff(local)
+                current.append(Minute(ts, local, g_last, {}, prices.import_price(high),
+                                      prices.export_price(high)))
+        elif current:
+            runs.append(current)
+            current = []
+        day += timedelta(days=1)
+    if current:
+        runs.append(current)
+    return runs
+
+
+def daily_mean_temperature(conn: sqlite3.Connection, source: str = "meteoswiss") -> dict[date, float]:
+    sums: dict[date, list[float]] = {}
+    rows = conn.execute("SELECT ts, temperature FROM weather WHERE source = ? AND temperature IS NOT NULL",
+                        (source,))
+    for ts, t in rows:
+        s = sums.setdefault(datetime.fromtimestamp(ts, TZ).date(), [0.0, 0])
+        s[0] += t
+        s[1] += 1
+    return {d: total / n for d, (total, n) in sums.items() if n >= 20}
+
+
+def replay_rooms(policy: RoomPolicy, runs: list[list[Minute]], heaters: dict[str, float],
+                 temps: dict[date, float]) -> RoomResult:
+    """`heaters`: id → watts, in priority order. Minute.g0 is the grid without these heaters."""
+    result = RoomResult(policy.name)
+    for run in runs:
+        on = dict.fromkeys(heaters, False)
+        since = dict.fromkeys(heaters, float(run[0].ts - 3600))
+        charged: dict[str, float] = {}
+        recent: deque[float] = deque(maxlen=SURPLUS_WINDOW)
+        today = None
+        for m in run:
+            if m.local.date() != today:
+                today = m.local.date()
+                result.days += 1
+                cap = {h: policy.capacity_wh(w, temps.get(today)) for h, w in heaters.items()}
+                charged = dict.fromkeys(heaters, 0.0)
+                result.months.setdefault(m.local.strftime("%Y-%m"), [0.0, 0.0, 0])[2] += 1
+            draws = {h: heaters[h] if on[h] and charged[h] < cap[h] else 0.0 for h in heaters}
+            recent.append(m.g0)
+            surplus = sum(recent) / len(recent)
+            g_now = m.g0 - sum(draws.values())
+            if g_now < -policy.off_import:
+                # Shed the lowest-priority heater that's drawing, regardless of minimum on time
+                for h in reversed(list(heaters)):
+                    if on[h] and draws[h] > 0:
+                        on[h], since[h] = False, m.ts
+                        result.switches += 1
+                        break
+            else:
+                # Highest priority first: each heater that fits the remaining surplus is on
+                budget = surplus - policy.margin
+                for h, w in heaters.items():
+                    target = charged[h] < cap[h] and budget >= w
+                    held = m.ts - since[h] < (policy.min_off_s if target else policy.min_on_s)
+                    if target != on[h] and not held:
+                        on[h], since[h] = target, m.ts
+                        result.switches += 1
+                    if on[h] and charged[h] < cap[h]:
+                        budget -= w
+            draws = {h: heaters[h] if on[h] and charged[h] < cap[h] else 0.0 for h in heaters}
+            total = sum(draws.values())
+            for h, d in draws.items():
+                charged[h] += d / 60
+            pv_part = min(total, max(m.g0, 0))
+            imp = (total - pv_part) / 60000
+            result.heat_kwh += pv_part / 60000
+            result.import_kwh += imp
+            result.export_lost_chf += pv_part / 60000 * m.export_price
+            result.import_chf += imp * m.import_price
+            month = result.months[m.local.strftime("%Y-%m")]
+            month[0] += total / 60000
+            month[1] += pv_part / 60000 * m.export_price + imp * m.import_price
+    return result
+
+
+def room_report(results: list[RoomResult]) -> str:
+    lines = [f"{results[0].days} days replayed.", "",
+             f"{'policy':28s} {'heat kWh':>9s} {'of which import':>15s} {'cost CHF':>9s} {'CHF/kWh':>8s} "
+             f"{'switches/d':>10s}"]
+    for r in results:
+        heat = r.heat_kwh + r.import_kwh
+        cost = r.export_lost_chf + r.import_chf
+        lines.append(f"{r.policy:28s} {heat:9.0f} {r.import_kwh:15.1f} {cost:9.2f} "
+                     f"{cost / max(heat, 1):8.3f} {r.switches / max(r.days, 1):10.1f}")
+    lines += ["", "Storage heater kWh per day, by month (days replayed in brackets):"]
+    for month in results[0].months:
+        days = results[0].months[month][2]
+        cells = [f"{r.months[month][0] / days:6.1f}" for r in results]
+        lines.append(f"  {month} ({days:2d})  " + "  ".join(cells))
+    return "\n".join(lines)

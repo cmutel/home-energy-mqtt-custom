@@ -151,7 +151,20 @@ backup on sunny forecasts changes nothing, so forecasts aren't needed for
 the water heaters. Missing: winter, and most of autumn/spring, as IoTaWatt
 history only overlaps the grid history from 2026-04.
 
-#### 3c. Water heaters as PV sinks
+Storage heater results (`dorfsteig-control replay --rooms`, 502 days
+2024-11 to 2026-10, water heaters as recorded; assumes a core takes up to
+8 h of full power at -5 °C daily mean, falling to nothing at the limit):
+with a 15 °C limit ~650 kWh of PV heat over the period (~470 kWh/year),
+mostly March-May and September-October, almost none in winter (no surplus)
+or summer; ~11 switches/day across 5 heaters; ~0.10 CHF/kWh (lost export,
+small imports) vs 0.25-0.27 CHF/kWh from the grid. 12 °C halves it, 18 °C
+doubles it. With the water heaters on PV first, storage heaters get ~20%
+less (54 vs 69 kWh on the 83 days with water data).
+
+#### 3c. Water heaters as PV sinks (code done 2026-10-12)
+
+- [x] `water.py`, modes always on / shadow / pv on the Solar page.
+- [ ] Shadow for a few days, then pv.
 
 - The relay only permits heating; the internal thermostat still decides.
 - Daytime: relay on only when there's PV surplus. Water heaters get surplus

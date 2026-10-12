@@ -6,7 +6,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
-from dorfsteig_control import replay
+from dorfsteig_control import replay, wattage
 from dorfsteig_control.config import from_legacy
 from dorfsteig_control.service import Controller, serve
 from dorfsteig_control.store import Store
@@ -42,6 +42,8 @@ def main() -> None:
     rp.add_argument("--from", dest="start", type=date.fromisoformat, default=date(2026, 4, 1))
     rp.add_argument("--to", dest="end", type=date.fromisoformat, default=date.today() - timedelta(days=1))
     rp.add_argument("--prices", type=int, default=None, help="Use one year's prices, e.g. 2027")
+    rp.add_argument("--rooms", action="store_true",
+                    help="Storage heaters on PV surplus instead (solar priority, measured wattages)")
 
     args = parser.parse_args()
     setup_logging()
@@ -66,6 +68,14 @@ def main() -> None:
             print(config.model_dump_json(indent=2))
         case "show-config":
             print(store.load_config().model_dump_json(indent=2))
+        case "replay" if args.rooms:
+            # Heaters that drew nothing in their last test (switched off by hand) are left out
+            heaters = {h: watts for h in store.load_config().solar.priority
+                       if (watts := wattage.estimated_watts(store.conn, h)[0]) > wattage.NO_LOAD_W}
+            runs = replay.load_grid_days(store.conn, args.start, args.end)
+            temps = replay.daily_mean_temperature(store.conn)
+            policies = [replay.RoomPolicy(f"limit {t} °C", temp_limit=t) for t in (12, 15, 18)]
+            print(replay.room_report([replay.replay_rooms(p, runs, heaters, temps) for p in policies]))
         case "replay":
             prices = tariff.PRICES[args.prices] if args.prices else None
             runs = replay.load_days(store.conn, args.start, args.end, prices)

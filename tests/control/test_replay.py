@@ -58,3 +58,18 @@ def test_load_forecast_uses_previous_day_issue(tmp_path):
                      [(noon - 86400, noon, 500.0), (noon - 3600, noon, 100.0)])   # the late issue is ignored
     expected = 500 * replay.PV_PER_RADIATION / 1000
     assert replay.load_forecast(conn) == {date(2026, 6, 2): pytest.approx(expected)}
+
+
+def test_rooms_fill_surplus_by_priority_and_respect_capacity():
+    run = day(3500, range(10, 16))
+    temps = {run[0].local.date(): 5.0}
+    heaters = {"a": 2000.0, "b": 1500.0, "c": 1000.0}
+    policy = replay.RoomPolicy("t", temp_limit=15, cold=-5, max_hours=2)
+    r = replay.replay_rooms(policy, [run], heaters, temps)
+    # 3500 W surplus fits a (2000) + b (1500) but not c; each core takes 2 h × 50% = 1 h of power,
+    # and once a and b are full, c gets the surplus
+    assert r.heat_kwh == pytest.approx(2.0 + 1.5 + 1.0, rel=0.05)
+    assert r.import_kwh < 0.1
+    # Too warm: nothing
+    warm = replay.replay_rooms(policy, [run], heaters, {run[0].local.date(): 16.0})
+    assert warm.heat_kwh == 0
