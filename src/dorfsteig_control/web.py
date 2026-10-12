@@ -246,6 +246,7 @@ def create_app(controller: Controller) -> FastAPI:
     async def notifications_save(
         daily_summary_at: str = Form(""), midday_status_at: str = Form(""), morning_report_at: str = Form(""),
         board_offline_min: float = Form(), alert_repeat_h: float = Form(),
+        watched_sensors: str = Form(""), sensor_offline_min: float = Form(30),
     ) -> RedirectResponse:
         def change(c: ControlConfig) -> None:
             c.notify.daily_summary_at = daily_summary_at or None
@@ -253,6 +254,8 @@ def create_app(controller: Controller) -> FastAPI:
             c.notify.morning_report_at = morning_report_at or None
             c.notify.board_offline_after_s = board_offline_min * 60
             c.notify.alert_repeat_s = alert_repeat_h * 3600
+            c.notify.watched_sensors = [r.strip() for r in watched_sensors.split(",") if r.strip()]
+            c.notify.sensor_offline_after_s = sensor_offline_min * 60
         return edit("/notifications", change, "Notification settings saved")
 
     @app.post(f"{PREFIX}/notifications/send")

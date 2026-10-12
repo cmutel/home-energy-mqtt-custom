@@ -71,7 +71,8 @@ def test_morning_report_sent_once(conn):
             sent.append(title)
 
     controller = Controller(Store(conn), notifier=Recorder(enabled=False))
-    controller.config = ControlConfig(notify=NotifySettings(daily_summary_at=None, morning_report_at="06:00"))
+    controller.config = ControlConfig(notify=NotifySettings(daily_summary_at=None, morning_report_at="06:00",
+                                                            watched_sensors=[]))
 
     def monitor_at(hour: int, minute: int) -> None:
         now = datetime(2026, 10, 13, hour, minute)

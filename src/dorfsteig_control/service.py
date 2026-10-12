@@ -13,6 +13,7 @@ controller's files each tick.
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -194,6 +195,16 @@ class Controller:
             elif self.notifier.clear(key):
                 await self.notifier.send(f"{board.title()} board back online", "Polling again.")
 
+        for room in notify.watched_sensors:
+            last = self.sensor_last_seen(room) or self.started
+            key = f"sensor-{room}"
+            if ts - last > notify.sensor_offline_after_s:
+                minutes = (ts - last) / 60
+                await self.notifier.alert(key, f"Sensor {room} not reporting",
+                                          f"No reading from the {room} sensor for {minutes:.0f} min.", repeat)
+            elif self.notifier.clear(key):
+                await self.notifier.send(f"Sensor {room} back", "Readings are arriving again.")
+
         await self.process_passive(ts)
 
         today = now.date().isoformat()
@@ -205,6 +216,14 @@ class Controller:
             if ts - datetime.combine(now.date(), at).timestamp() > 3600:
                 continue   # started long after the scheduled time; skip until tomorrow
             await self.send_scheduled(kind, now)
+
+    def sensor_last_seen(self, room: str) -> float | None:
+        try:
+            row = self.store.conn.execute(
+                "SELECT MAX(ts) FROM air_quality WHERE room = ?", (room,)).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return row[0]
 
     async def send_scheduled(self, kind: str, now: datetime | None = None) -> None:
         now = now or datetime.now()

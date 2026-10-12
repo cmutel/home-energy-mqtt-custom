@@ -71,7 +71,7 @@ def test_alerts_raise_once_and_clear(tmp_path: Path):
 
 def test_daily_summary_sent_once(tmp_path: Path):
     controller, notifier = make_controller(tmp_path)
-    controller.config = ControlConfig(notify=NotifySettings(daily_summary_at="21:00"))
+    controller.config = ControlConfig(notify=NotifySettings(daily_summary_at="21:00", watched_sensors=[]))
     controller.store.save_config(controller.config, "test")
 
     def monitor_at(hour: int, minute: int) -> None:
@@ -86,3 +86,22 @@ def test_daily_summary_sent_once(tmp_path: Path):
     monitor_at(21, 1)
     monitor_at(21, 2)
     assert [m for m in notifier.messages if m.startswith("Summary")] and len(notifier.messages) == 1
+
+
+def test_sensor_offline_alert_and_recovery(tmp_path: Path):
+    controller, notifier = make_controller(tmp_path)
+    controller.config = ControlConfig(notify=NotifySettings(daily_summary_at=None, morning_report_at=None,
+                                                            watched_sensors=["balkon"]))
+    now = time.time()
+    controller.grid_ts = now
+    controller.board_polls = {b: {"ts": now} for b in ("upstairs", "downstairs")}
+    conn = controller.store.conn
+    conn.execute("INSERT INTO air_quality (ts, room, sensor_id, temperature) VALUES (?, 'balkon', '1', 5)",
+                 (now - 3600,))
+    asyncio.run(controller.monitor())
+    asyncio.run(controller.monitor())
+    assert notifier.messages == ["Sensor balkon not reporting"]
+    conn.execute("INSERT INTO air_quality (ts, room, sensor_id, temperature) VALUES (?, 'balkon', '1', 5)",
+                 (now - 60,))
+    asyncio.run(controller.monitor())
+    assert notifier.messages[-1] == "Sensor balkon back"

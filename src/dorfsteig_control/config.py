@@ -102,6 +102,9 @@ class NotifySettings(_Model):
     midday_status_at: time | None = None
     morning_report_at: time | None = time(6, 0)   # yesterday's energy and costs per circuit
     board_offline_after_s: float = 300
+    # Air quality / climate sensors (rooms in the air_quality table) to watch; they publish every few minutes
+    watched_sensors: list[str] = Field(default_factory=lambda: ["balkon", "küchen"])
+    sensor_offline_after_s: float = 30 * 60
     alert_repeat_s: float = 4 * 3600   # don't repeat the same alert more often than this
 
 

@@ -79,10 +79,13 @@ def test_solar_settings_and_priority(setup):
 def test_notification_settings(setup):
     controller, client = setup
     client.post("/heating/notifications", data={"daily_summary_at": "20:30", "midday_status_at": "",
-                                                "board_offline_min": "10", "alert_repeat_h": "2"})
+                                                "board_offline_min": "10", "alert_repeat_h": "2",
+                                                "watched_sensors": "balkon, küchen",
+                                                "sensor_offline_min": "45"})
     n = controller.config.notify
     assert n.daily_summary_at.hour == 20 and n.midday_status_at is None
     assert n.board_offline_after_s == 600 and n.alert_repeat_s == 7200
+    assert n.watched_sensors == ["balkon", "küchen"] and n.sensor_offline_after_s == 2700
 
 
 def test_locked_with_legacy_config(tmp_path: Path):
