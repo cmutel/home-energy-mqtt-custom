@@ -125,3 +125,27 @@ def test_heater_without_load_counts_zero(tmp_path: Path):
     store.log_events([Event(ts(12), "playroom_north", True, "export", 2000)])
     summary = day_summary(store.conn, datetime(2026, 1, 8, 14))
     assert summary.heaters["playroom_north"].kwh == 0
+
+
+def test_data_source_lights(tmp_path: Path):
+    from dorfsteig_control.sources import Source, data_sources
+    assert Source("x", "", 10, 60, 300).level == "green"
+    assert Source("x", "", 100, 60, 300).level == "yellow"
+    assert Source("x", "", None, 60, 300).level == "red"
+    controller, _ = make_controller(tmp_path)
+    controller.board_polls = {"upstairs": {"ts": time.time()}}
+    lights = {s.name: s.level for s in data_sources(controller)}
+    assert lights["Upstairs board"] == "green" and lights["Downstairs board"] == "red"
+    assert lights["IoTaWatt"] == "red"           # no data at all
+
+
+def test_heating_power_split(tmp_path: Path):
+    from dorfsteig_control.summary import heating_power
+    store = Store(init_db(tmp_path / "t.sqlite"))
+    store.log_events([Event(ts(10), "living_room", True, "export", 2000),
+                      Event(ts(10), "downstairs_water", True, "schedule", None)])
+    store.conn.executemany("INSERT INTO iotawatt_readings (ts, water_heater) VALUES (?, ?)",
+                           [(ts(10) + 60 * i, 1500.0) for i in range(5)])
+    space, water = heating_power(store.conn, ts(10), ts(10, 10))
+    assert space[ts(10)] == 2000 and len(space) == 10
+    assert water == {ts(10) + 60 * i: 1500.0 for i in range(5)}

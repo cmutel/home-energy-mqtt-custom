@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DEFAULT_WATTS = 2000.0
+WATER_HEATER_WATTS = 1498.0   # both tanks, from their measured history
 
 # Active test timing (seconds)
 SETTLE_S = 30      # let earlier switching settle before the baseline
@@ -135,6 +136,8 @@ def estimated_watts(conn: sqlite3.Connection, heater: str) -> tuple[float, str]:
     active = latest_active(conn, heater)
     if active is not None:
         return active, "test"
+    if BY_ID[heater].water:
+        return WATER_HEATER_WATTS, "history"
     return DEFAULT_WATTS, "default"
 
 

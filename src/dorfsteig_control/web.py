@@ -24,12 +24,14 @@ from dorfsteig_control.heaters import BY_ID, HEATERS
 from dorfsteig_control.outputs import downstairs_payload, legacy_status, upstairs_payload
 from dorfsteig_control.schedule import rule_active
 from dorfsteig_control.service import Controller
-from dorfsteig_control.sparkline import sparkline
-from dorfsteig_control.summary import day_summary
+from dorfsteig_control.sources import data_sources
+from dorfsteig_control.sparkline import sparkline, stacked
+from dorfsteig_control.summary import day_summary, heating_power
 from dorfsteig_core.settings import settings
 
 HERE = Path(__file__).parent
 SPARK_HOURS = 6
+SPACE_COLOUR, WATER_COLOUR = "#f58518", "#4c78a8"
 PREFIX = "/heating"
 
 
@@ -143,12 +145,17 @@ def create_app(controller: Controller) -> FastAPI:
         now = datetime.now()
         end = now.timestamp()
         start = end - SPARK_HOURS * 3600
+        space, water = heating_power(controller.store.conn, start, end, controller.dry_run)
         return {
             "spark": {
                 "grid": sparkline(minute_series("grid_readings", "power", start), start, end, "grid"),
                 "pv": sparkline(minute_series("inverter_readings", "power_ac", start), start, end, "pv"),
+                "heating": stacked([(space, SPACE_COLOUR), (water, WATER_COLOUR)], start, end),
                 "hours": SPARK_HOURS,
             },
+            "sources": data_sources(controller),
+            "now": end,
+            "colours": {"space": SPACE_COLOUR, "water": WATER_COLOUR},
             "status": controller.status(),
             "today": day_summary(controller.store.conn, now, dry_run=controller.dry_run),
             "boosted": {r.heater for r in controller.config.rules

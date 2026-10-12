@@ -6,6 +6,41 @@ WIDTH, HEIGHT = 240, 44
 GAP_S = 300   # break the line where minutes are missing
 
 
+def stacked(series: list[tuple[dict[int, float], str]], start: float, end: float) -> Markup:
+    """Stacked areas, bottom series first: [(ts → W, colour), ...]. A minute missing from a
+    series ends the areas from there up (e.g. water data that hasn't arrived yet)."""
+    stamps = sorted(set().union(*(s for s, _ in series)))
+    if not stamps:
+        return Markup(f'<svg class="spark" viewBox="0 0 {WIDTH} {HEIGHT}"></svg>')
+    layers, base = [], dict.fromkeys(stamps, 0.0)
+    for values, colour in series:
+        top = {ts: base[ts] + values[ts] for ts in stamps if ts in values and ts in base}
+        layers.append((base, top, colour))
+        base = top
+    peak = max([v for _, top, _ in layers for v in top.values()] + [1.0])
+
+    def x(ts: float) -> float:
+        return round((ts - start) / (end - start) * WIDTH, 1)
+
+    def y(v: float) -> float:
+        return round(HEIGHT - 1 - v / peak * (HEIGHT - 2), 1)
+
+    shapes = []
+    for low, high, colour in layers:
+        ts_list = [ts for ts in stamps if ts in high]
+        runs: list[list[int]] = [[]]
+        for ts in ts_list:
+            if runs[-1] and ts - runs[-1][-1] > GAP_S:
+                runs.append([])
+            runs[-1].append(ts)
+        for run in filter(None, runs):
+            upper = " ".join(f"{x(t)},{y(high[t])}" for t in run)
+            lower = " ".join(f"{x(t)},{y(low[t])}" for t in reversed(run))
+            shapes.append(f'<polygon points="{upper} {lower}" fill="{colour}" />')
+    return Markup(f'<svg class="spark" viewBox="0 0 {WIDTH} {HEIGHT}" preserveAspectRatio="none">'
+                  f'<g fill-opacity="0.85">{"".join(shapes)}</g></svg>')
+
+
 def sparkline(points: list[tuple[float, float]], start: float, end: float, kind: str) -> Markup:
     """`points`: (ts, W). kind "grid": green above zero (export), red below; "pv": yellow area."""
     if not points:

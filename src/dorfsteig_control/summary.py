@@ -65,6 +65,25 @@ class DaySummary:
     def solar_heating_kwh(self) -> float:
         return sum(h.solar_kwh for h in self.heaters.values())
 
+    def _part(self, water: bool) -> list[HeaterDay]:
+        return [d for h, d in self.heaters.items() if BY_ID[h].water == water]
+
+    @property
+    def water_kwh(self) -> float:
+        return sum(d.kwh for d in self._part(True))
+
+    @property
+    def water_solar_kwh(self) -> float:
+        return sum(d.solar_kwh for d in self._part(True))
+
+    @property
+    def space_kwh(self) -> float:
+        return sum(d.kwh for d in self._part(False))
+
+    @property
+    def space_solar_kwh(self) -> float:
+        return sum(d.solar_kwh for d in self._part(False))
+
 
 def _bucket(reason: str) -> str:
     if reason in ("export", "water pv"):
@@ -161,6 +180,38 @@ def day_summary(conn: sqlite3.Connection, now: datetime, dry_run: bool = False) 
         summary.heaters[heater] = day
     summary.pv_kwh, summary.import_kwh, summary.export_kwh = energy(conn, start, end)
     return summary
+
+
+def heating_power(conn: sqlite3.Connection, start: float, end: float,
+                  dry_run: bool = False) -> tuple[dict[int, float], dict[int, float]]:
+    """Per-minute heating power, W: (space, water). Same sources as the daily energy.
+
+    Water minutes are only there once IoTaWatt / house_minutes have them (a
+    few minutes late); space minutes are on-time × wattage up to now.
+    """
+    first, last = int(start) // 60 * 60, int(end) // 60 * 60
+    space = dict.fromkeys(range(first, last, 60), 0.0)
+    water: dict[int, float] = {}
+    for heater, spans in on_spans(conn, start, end, dry_run).items():
+        if heater not in BY_ID:
+            continue
+        if heater in DRAW_SOURCES:
+            table, column = DRAW_SOURCES[heater]
+            for s, e, _ in spans:
+                try:
+                    rows = conn.execute(f"SELECT ts, {column} FROM {table} WHERE ts >= ? AND ts < ? "
+                                        f"AND {column} IS NOT NULL", (s, e)).fetchall()
+                except sqlite3.OperationalError:
+                    rows = []
+                for ts, w in rows:
+                    water[ts] = water.get(ts, 0.0) + w
+        elif not no_load(conn, heater):
+            watts = estimated_watts(conn, heater)[0]
+            for s, e, _ in spans:
+                for ts in range(int(s) // 60 * 60, min(int(e), last), 60):
+                    if ts in space:
+                        space[ts] += watts
+    return space, water
 
 
 def format_summary(s: DaySummary) -> str:

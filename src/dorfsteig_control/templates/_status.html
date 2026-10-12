@@ -21,15 +21,24 @@
   <article>
     <div class="label">Heating today</div>
     <div class="value">≈{{ "%.1f" | format(today.heating_kwh) }} kWh</div>
-    <div class="label">≈{{ "%.1f" | format(today.solar_heating_kwh) }} kWh from PV surplus</div>
-    <div class="label">water heaters measured; storage heaters at most (on-time × power)</div>
+    <div class="label"><span class="swatch" style="background: {{ colours.water }}"></span>
+      Water {{ "%.1f" | format(today.water_kwh) }} kWh ({{ "%.1f" | format(today.water_solar_kwh) }} from PV)</div>
+    <div class="label"><span class="swatch" style="background: {{ colours.space }}"></span>
+      Space ≤{{ "%.1f" | format(today.space_kwh) }} kWh ({{ "%.1f" | format(today.space_solar_kwh) }} from PV)</div>
+    {{ spark.heating }}<div class="label">last {{ spark.hours }} h · water measured, space at most on-time × power</div>
   </article>
-  <article>
-    <div class="label">Boards</div>
-    {% for board in ["upstairs", "downstairs"] %}
-      <div>{{ board }}: {{ (s.boards.get(board) or {}).get("ts") | ago }}</div>
-    {% endfor %}
-  </article>
+</div>
+
+<h3>Data sources</h3>
+<div class="sources">
+  {% for src in sources %}
+  <div class="source">
+    <span class="light {{ src.level }}" title="{{ src.level }}"></span>
+    <div><strong>{{ src.name }}</strong><br>
+      <small>{% if src.age_s is none %}no data{% else %}{{ (now - src.age_s) | ago }}{% endif %}</small><br>
+      <small class="muted">{{ src.detail }}</small></div>
+  </div>
+  {% endfor %}
 </div>
 
 <h3>Heaters</h3>
@@ -43,7 +52,8 @@
       <td>{{ h.reason or "" }}</td>
       <td>{{ h.since | ago if h.since else "" }}</td>
       <td>{{ h.watts | watts }}</td>
-      <td>{% if h.id in today.heaters %}{{ "%.1f" | format(today.heaters[h.id].hours) }} h{% endif %}</td>
+      <td>{% if h.id in today.heaters %}{% set d = today.heaters[h.id] %}{{ "%.1f" | format(d.hours) }} h
+        <small class="muted">{{ "≈" if d.measured is not none else "≤" }}{{ "%.1f" | format(d.kwh) }} kWh</small>{% endif %}</td>
       <td>
         {% for hours in [1, 2, 4] %}
         <form method="post" action="{{ prefix }}/boost" class="inline">

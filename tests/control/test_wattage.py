@@ -105,4 +105,4 @@ def test_no_load_is_not_used_as_estimate(tmp_path: Path, monkeypatch):
     assert controller.states["downstairs_water"].on   # restored
     conn = controller.store.conn
     assert [m["method"] for m in wattage.measurements(conn)] == ["no load"]
-    assert wattage.estimated_watts(conn, "downstairs_water") == (2000.0, "default")
+    assert wattage.estimated_watts(conn, "downstairs_water") == (1498.0, "history")

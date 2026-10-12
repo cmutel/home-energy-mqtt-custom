@@ -16,6 +16,14 @@
     .tiles .value { font-size: 1.6rem; font-weight: bold; }
     .tiles .label { color: var(--pico-muted-color); font-size: .85rem; }
     .tiles .spark { width: 100%; height: 2.75rem; display: block; margin-top: .4rem; }
+    .swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; vertical-align: middle; }
+    .sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .75rem; margin-bottom: 1.5rem; }
+    .source { display: flex; gap: .75rem; align-items: flex-start; padding: .75rem 1rem; line-height: 1.3;
+              border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius);
+              background: var(--pico-card-background-color); }
+    .light { flex: none; width: .9rem; height: .9rem; margin-top: .2rem; border-radius: 50%;
+             box-shadow: 0 0 0 2px rgba(0, 0, 0, .08); }
+    .light.green { background: #3a9d5d; } .light.yellow { background: #e5b700; } .light.red { background: #d9534f; }
     td form, td button { margin: 0; }
     td button, .small { padding: .2rem .55rem; font-size: .8rem; width: auto; }
     .inline { display: inline-block; }
