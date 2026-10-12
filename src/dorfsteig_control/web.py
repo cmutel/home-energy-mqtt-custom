@@ -5,6 +5,7 @@ on the Pi. Plain HTML forms with POST → redirect; HTMX only refreshes the
 live parts of the status and wattage pages. No login: local network only.
 """
 
+import sqlite3
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -23,10 +24,12 @@ from dorfsteig_control.heaters import BY_ID, HEATERS
 from dorfsteig_control.outputs import downstairs_payload, legacy_status, upstairs_payload
 from dorfsteig_control.schedule import rule_active
 from dorfsteig_control.service import Controller
+from dorfsteig_control.sparkline import sparkline
 from dorfsteig_control.summary import day_summary
 from dorfsteig_core.settings import settings
 
 HERE = Path(__file__).parent
+SPARK_HOURS = 6
 PREFIX = "/heating"
 
 
@@ -128,9 +131,24 @@ def create_app(controller: Controller) -> FastAPI:
 
     # ---- status
 
+    def minute_series(table: str, column: str, start: float) -> list[tuple[float, float]]:
+        try:
+            return controller.store.conn.execute(
+                f"SELECT ts, {column} FROM {table} WHERE ts >= ? AND {column} IS NOT NULL ORDER BY ts",
+                (start,)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
     def status_context() -> dict:
         now = datetime.now()
+        end = now.timestamp()
+        start = end - SPARK_HOURS * 3600
         return {
+            "spark": {
+                "grid": sparkline(minute_series("grid_readings", "power", start), start, end, "grid"),
+                "pv": sparkline(minute_series("inverter_readings", "power_ac", start), start, end, "pv"),
+                "hours": SPARK_HOURS,
+            },
             "status": controller.status(),
             "today": day_summary(controller.store.conn, now, dry_run=controller.dry_run),
             "boosted": {r.heater for r in controller.config.rules

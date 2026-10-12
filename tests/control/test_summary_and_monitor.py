@@ -105,3 +105,23 @@ def test_sensor_offline_alert_and_recovery(tmp_path: Path):
                  (now - 60,))
     asyncio.run(controller.monitor())
     assert notifier.messages[-1] == "Sensor balkon back"
+
+
+def test_water_heater_energy_is_measured_not_on_time(tmp_path: Path):
+    store = Store(init_db(tmp_path / "t.sqlite"))
+    # Downstairs water heater relay on all day, but it only drew 1500 W for one hour
+    store.log_events([Event(ts(0, day=7), "downstairs_water", True, "schedule", None)])
+    store.conn.executemany("INSERT INTO iotawatt_readings (ts, water_heater) VALUES (?, ?)",
+                           [(ts(6) + 60 * i, 1500.0 if i < 60 else 0.0) for i in range(120)])
+    summary = day_summary(store.conn, datetime(2026, 1, 8, 16))
+    day = summary.heaters["downstairs_water"]
+    assert day.hours == 16 and day.kwh == 1.5
+
+
+def test_heater_without_load_counts_zero(tmp_path: Path):
+    from dorfsteig_control import wattage
+    store = Store(init_db(tmp_path / "t.sqlite"))
+    wattage.record(store.conn, ts(1), "playroom_north", "no load", 0, 5, ts(1) + 90)
+    store.log_events([Event(ts(12), "playroom_north", True, "export", 2000)])
+    summary = day_summary(store.conn, datetime(2026, 1, 8, 14))
+    assert summary.heaters["playroom_north"].kwh == 0

@@ -72,6 +72,7 @@ class Controller:
         self.grid_power: float | None = None
         self.grid_ts = self.started         # treat startup as the last "reading" for staleness
         self.pv_power: float | None = None
+        self.pv_ts: float | None = None
         self.history = wattage.GridHistory()
         self.last_tick = 0.0
         self.board_polls: dict[str, dict] = {}
@@ -316,7 +317,8 @@ class Controller:
             "healthy": self.healthy,
             "last_tick": self.last_tick,
             "grid": {"power": self.grid_power, "age_s": round(now - self.grid_ts, 1)},
-            "pv": {"power": self.pv_power},
+            "pv": {"power": self.pv_power,
+                   "age_s": None if self.pv_ts is None else round(now - self.pv_ts, 1)},
             "heaters": [
                 {"id": h.id, "name": h.name, **asdict(self.states[h.id]),
                  "watts": wattage.estimated_watts(self.store.conn, h.id)[0]}
@@ -350,6 +352,7 @@ async def mqtt_loop(controller: Controller) -> None:
                         controller.on_grid_power(value)
                     else:
                         controller.pv_power = value
+                        controller.pv_ts = time.time()
         except aiomqtt.MqttError as e:
             log.warning("MQTT error (%s), reconnecting in %ds", e, delay)
             await asyncio.sleep(delay)

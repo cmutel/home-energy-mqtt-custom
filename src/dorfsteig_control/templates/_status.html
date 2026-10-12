@@ -9,16 +9,20 @@
     {% elif s.grid.power >= 0 %}<div class="value on">↑ {{ s.grid.power | watts }}</div><div class="label">exporting</div>
     {% else %}<div class="value">↓ {{ (-s.grid.power) | watts }}</div><div class="label">importing</div>{% endif %}
     <div class="label">{{ s.grid.age_s }} s old</div>
+    {{ spark.grid }}<div class="label">last {{ spark.hours }} h</div>
   </article>
   <article>
     <div class="label">PV</div>
     <div class="value">{{ s.pv.power | watts }}</div>
     {% if today.pv_kwh is not none %}<div class="label">{{ "%.1f" | format(today.pv_kwh) }} kWh today</div>{% endif %}
+    <div class="label">{% if s.pv.age_s is none %}no reading yet{% else %}{{ s.pv.age_s }} s old{% endif %}</div>
+    {{ spark.pv }}<div class="label">last {{ spark.hours }} h</div>
   </article>
   <article>
     <div class="label">Heating today</div>
     <div class="value">≈{{ "%.1f" | format(today.heating_kwh) }} kWh</div>
     <div class="label">≈{{ "%.1f" | format(today.solar_heating_kwh) }} kWh from PV surplus</div>
+    <div class="label">water heaters measured; storage heaters at most (on-time × power)</div>
   </article>
   <article>
     <div class="label">Boards</div>

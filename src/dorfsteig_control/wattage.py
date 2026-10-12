@@ -138,6 +138,13 @@ def estimated_watts(conn: sqlite3.Connection, heater: str) -> tuple[float, str]:
     return DEFAULT_WATTS, "default"
 
 
+def no_load(conn: sqlite3.Connection, heater: str) -> bool:
+    """Whether the latest measurement of a heater found no load (e.g. switched off by hand)."""
+    row = conn.execute("SELECT method FROM heater_power WHERE heater = ? ORDER BY ts DESC LIMIT 1",
+                       (heater,)).fetchone()
+    return row is not None and row[0] == "no load"
+
+
 def measurements(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
     rows = conn.execute(
         "SELECT ts, heater, method, watts, spread, window_end, note FROM heater_power "
