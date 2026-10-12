@@ -8,7 +8,8 @@ Sources:
   power factor (volts and Hz for the voltage input), newest 5-second
   average. Fetched on request, at most once per CACHE_S, so several open
   pages don't load the IoTaWatt; the list of series is refreshed hourly.
-- The heater relays, so switching something can be matched to the numbers.
+- The heater relays and each heater's estimated power (wattage.py), so
+  switching something can be matched to the numbers.
 
 Derived, as in the energy tables (dorfsteig_ingest.energy): house = PV -
 grid, downstairs = mains A + B + the channels on the third phase, upstairs =
@@ -27,10 +28,12 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from dorfsteig_control import wattage
 from dorfsteig_control.heaters import BY_ID
 from dorfsteig_core import iotawatt
 
 if TYPE_CHECKING:
+    from dorfsteig_control.engine import HeaterState
     from dorfsteig_control.service import Controller
 
 log = logging.getLogger(__name__)
@@ -81,6 +84,12 @@ def per_phase_house(devices: dict) -> dict[str, dict[str, float | None]]:
         house = None if grid_power is None or pv is None else pv - grid_power
         result[phase] = {"grid": grid_power, "pv": pv, "house": house}
     return result
+
+
+def heater_entry(controller: "Controller", heater: str, state: "HeaterState") -> dict:
+    watts, source = wattage.estimated_watts(controller.store.conn, heater)
+    return {"id": heater, "name": BY_ID[heater].name, "on": state.on, "reason": state.reason,
+            "watts": watts, "watts_source": source}
 
 
 class LiveView:
@@ -138,6 +147,6 @@ class LiveView:
             "iotawatt": {"ts": iotawatt_ts, "age_s": None if iotawatt_ts is None else now - iotawatt_ts,
                          "error": self.error, "units": dict(self.series), "series": channels},
             "mbmd": devices,
-            "heaters": [{"id": heater, "name": BY_ID[heater].name, "on": state.on, "reason": state.reason}
+            "heaters": [heater_entry(controller, heater, state)
                         for heater, state in controller.states.items()],
         }

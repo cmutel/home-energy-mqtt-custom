@@ -15,7 +15,12 @@
     .tiles .label { color: var(--pico-muted-color); font-size: .85rem; }
     .panel td, .panel th { padding: .25rem .5rem; }
     .group td { font-weight: bold; color: var(--pico-muted-color); padding-top: .75rem; }
-    .on { color: var(--pico-ins-color); font-weight: bold; }
+    /* Relay state as a pill: filled green when on, grey outline when off */
+    .relay { display: inline-block; min-width: 3.2rem; text-align: center; padding: .1rem .6rem;
+             border-radius: 1rem; font-size: .8rem; font-weight: bold; letter-spacing: .05em; }
+    .relay.on { background: #3a9d5d; color: white; }
+    .relay.off { border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); }
+    tr.heater-on td { background: color-mix(in srgb, #3a9d5d 8%, transparent); }
   </style>
 </head>
 <body>
@@ -130,9 +135,18 @@
     }
 
     function drawHeaters(s) {
-      document.getElementById('heaters').innerHTML = '<tbody>' + s.heaters.map(h =>
-        `<tr><td>${h.name}</td><td class="${h.on ? 'on' : ''}">${h.on ? 'on' : 'off'}</td>
-         <td>${h.reason || ''}</td></tr>`).join('') + '</tbody>';
+      // Estimated power: from a wattage test, recent switching ("passive"), or a default guess
+      const rows = s.heaters.map(h =>
+        `<tr class="${h.on ? 'heater-on' : ''}">
+           <td><span class="relay ${h.on ? 'on' : 'off'}">${h.on ? 'ON' : 'OFF'}</span></td>
+           <td>${h.name}</td>
+           <td>${power(h.watts)} <small class="note">${h.watts_source}</small></td>
+           <td><small class="note">${h.reason || ''}</small></td></tr>`);
+      const onWatts = s.heaters.filter(h => h.on).reduce((sum, h) => sum + h.watts, 0);
+      document.getElementById('heaters').innerHTML =
+        '<thead><tr><th></th><th>Heater</th><th>Power (est.)</th><th>Why</th></tr></thead>' +
+        `<tbody>${rows.join('')}</tbody>` +
+        `<tfoot><tr><td></td><td>Relays on</td><td>${power(onWatts)}</td><td></td></tr></tfoot>`;
     }
 
     function drawIotawatt(s) {
