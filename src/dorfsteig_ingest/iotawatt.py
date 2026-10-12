@@ -5,6 +5,14 @@ Two entry points share the same fetch code:
 * `poll` runs continuously, fetching anything newer than the last stored row.
 * `backfill` walks forward from a start date, skipping complete hours.
   It resumes automatically if interrupted.
+
+Times are sent and received as Unix timestamps (`time.utc.unix`). Date
+strings and `time.unix` are interpreted in the IoTaWatt's own timezone
+setting, which is a fixed offset without DST (currently -1). Before
+2026-10-12 this module used them, which stored everything an hour early and
+read the last hour as empty future rows; `shift_timestamps` repairs that.
+Rows without any values (e.g. the IoTaWatt was offline) are not stored, so
+they are fetched again later.
 """
 
 import logging
@@ -28,7 +36,7 @@ RETRY_BACKOFF = 10    # seconds; multiplied by attempt number
 DEFAULT_START = datetime(2023, 8, 10, tzinfo=timezone.utc)
 
 SELECT = (
-    "[time.unix"
+    "[time.utc.unix"
     ",Input_0.volts"
     ",Mains_A.watts"
     ",Mains_B.watts"
@@ -47,6 +55,12 @@ SELECT = (
     "]"
 )
 
+COLUMNS = [
+    "input_0", "mains_a", "mains_b", "oven",
+    "zone_a", "zone_b", "zone_c", "zone_d", "zone_e", "zone_f",
+    "clothes_washer", "clothes_dryer", "water_heater", "dishwasher", "stovetop",
+]
+
 INSERT_SQL = """
     INSERT OR REPLACE INTO iotawatt_readings (
         ts,
@@ -62,8 +76,8 @@ def fetch_range(client: httpx.Client, begin: datetime, end: datetime) -> list[li
         f"http://{settings.iotawatt_host}/query",
         params={
             "select": SELECT,
-            "begin": begin.strftime("%Y-%m-%dT%H:%M:%S"),
-            "end":   end.strftime("%Y-%m-%dT%H:%M:%S"),
+            "begin": str(int(begin.timestamp())),
+            "end":   str(int(end.timestamp())),
             "group": "1m",
             "format": "json",
             "header": "yes",
@@ -73,6 +87,14 @@ def fetch_range(client: httpx.Client, begin: datetime, end: datetime) -> list[li
     )
     response.raise_for_status()
     return response.json()["data"]
+
+
+def store_rows(conn: sqlite3.Connection, rows: list[list]) -> int:
+    """Store rows that have at least one value. Returns the number stored."""
+    rows = [r for r in rows if any(v is not None for v in r[1:])]
+    conn.executemany(INSERT_SQL, rows)
+    conn.commit()
+    return len(rows)
 
 
 def fetch_with_retry(client: httpx.Client, begin: datetime, end: datetime) -> list[list]:
@@ -108,12 +130,10 @@ def poll_once(conn: sqlite3.Connection, client: httpx.Client) -> int:
     total = 0
     while begin < now:
         end = min(begin + timedelta(hours=1), now)
-        rows = fetch_with_retry(client, begin, end)
-        if rows:
-            conn.executemany(INSERT_SQL, rows)
-            conn.commit()
-            total += len(rows)
-            log.info("Stored %d rows from %s", len(rows), begin.strftime("%Y-%m-%d %H:%M"))
+        n = store_rows(conn, fetch_with_retry(client, begin, end))
+        if n:
+            total += n
+            log.info("Stored %d rows from %s", n, begin.strftime("%Y-%m-%d %H:%M"))
         begin = end
 
     return total
@@ -184,14 +204,12 @@ def backfill(start: datetime = DEFAULT_START, max_hours: int | None = None) -> N
                 continue
 
             try:
-                rows = fetch_range(client, begin, end)
-                conn.executemany(INSERT_SQL, rows)
-                conn.commit()
-                fetched += len(rows)
+                n = store_rows(conn, fetch_range(client, begin, end))
+                fetched += n
                 completed += 1
                 pct = 100 * (skipped + completed) / total_hours
                 log.info("[%5.1f%%] %s  %3d rows  %.2fs", pct, begin.strftime("%Y-%m-%d %H:%M"),
-                         len(rows), time.monotonic() - t0)
+                         n, time.monotonic() - t0)
             except Exception as e:
                 log.warning("Error at %s: %s — skipping", begin.isoformat(), e)
 
@@ -200,3 +218,24 @@ def backfill(start: datetime = DEFAULT_START, max_hours: int | None = None) -> N
 
     log.info("Done. %d rows fetched, %d hours skipped (already complete). Path: %s",
              fetched, skipped, settings.db_path)
+
+
+# ---- one-off repair -----------------------------------------------------------
+
+def shift_timestamps(conn: sqlite3.Connection, seconds: int) -> tuple[int, int]:
+    """Repair rows stored before the switch to Unix timestamps.
+
+    Deletes rows without values and moves all others by `seconds`. Refuses to
+    run twice. Returns (deleted, shifted).
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS ingest_meta (key TEXT PRIMARY KEY, value TEXT)")
+    if conn.execute("SELECT 1 FROM ingest_meta WHERE key = 'iotawatt_shift'").fetchone():
+        raise RuntimeError("IoTaWatt timestamps were already shifted")
+    values = " AND ".join(f"{c} IS NULL" for c in COLUMNS)
+    with conn:
+        deleted = conn.execute(f"DELETE FROM iotawatt_readings WHERE {values}").rowcount
+        # Via negative values, so the primary key never collides mid-update
+        shifted = conn.execute("UPDATE iotawatt_readings SET ts = -(ts + ?)", (seconds,)).rowcount
+        conn.execute("UPDATE iotawatt_readings SET ts = -ts")
+        conn.execute("INSERT INTO ingest_meta VALUES ('iotawatt_shift', ?)", (str(seconds),))
+    return deleted, shifted
