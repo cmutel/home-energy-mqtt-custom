@@ -88,7 +88,7 @@ class DaySummary:
 def _bucket(reason: str) -> str:
     if reason in ("export", "water pv"):
         return "solar"
-    if reason in ("schedule", "water backup", "water safety"):
+    if reason in ("schedule", "water backup", "water safety", "night plan"):
         return "scheduled"
     return "other"
 

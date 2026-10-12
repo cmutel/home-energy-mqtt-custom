@@ -9,7 +9,7 @@ Raspberry Pi.
 | `dorfsteig_core` | Settings, domain models, SQLite schema, MQTT helpers | In use |
 | `dorfsteig_ingest` | Store IoTaWatt, MBMD power and air-quality data in SQLite | In use |
 | `dorfsteig_control` | Heating controller, ESP32 outputs, web UI, wattage tests, Pushover | In use |
-| `dorfsteig_forecast` | Weather/PV forecasts and heating plans | Planned (phase 4) |
+| `dorfsteig_forecast` | PV forecast, base load and heating demand models | In use |
 
 Dependency rules between the libraries are enforced by import-linter
 (see `[tool.importlinter]` in `pyproject.toml`). Most importantly, the
@@ -24,7 +24,7 @@ See [PLAN.md](PLAN.md) for the roadmap.
 src/dorfsteig_core/       shared code
 src/dorfsteig_ingest/     data collection (CLI: dorfsteig-ingest)
 src/dorfsteig_control/    heating controller + web UI (CLI: dorfsteig-control)
-src/dorfsteig_forecast/   forecasting (not yet started)
+src/dorfsteig_forecast/   forecasts (CLI: dorfsteig-forecast)
 tests/                    pytest, one folder per library
 dashboards/               static HTML dashboards served by nginx, query Datasette
 datasette.yml             Datasette metadata and canned queries
@@ -76,7 +76,29 @@ uv run dorfsteig-ingest energy --rebuild    # recompute them from scratch
 uv run dorfsteig-ingest backfill-weather    # MeteoSwiss station, ERA5 and day-ahead forecast history
 uv run dorfsteig-ingest weather             # hourly forecasts and station data
 uv run dorfsteig-control replay             # compare water heater policies on recorded data
+uv run dorfsteig-control replay --rooms     # storage heaters on PV surplus
+uv run dorfsteig-control replay --night     # night plan policies (needs dorfsteig-forecast backfill)
 ```
+
+## Forecasts
+
+`dorfsteig-forecast run` (a service) writes, after each hourly weather
+forecast, the PV forecast per hour (`pv_forecast`) and a summary per day
+(`day_forecast`: mean temperature, PV, usual house load and the PV surplus
+beyond it). The models are refitted daily from the history and stored in
+`forecast_models`; each module's docstring explains its model, and
+`notebooks/pv_model.py` compares the PV model with gradient boosting.
+
+```bash
+uv run dorfsteig-forecast fit         # refit now and print the models
+uv run dorfsteig-forecast backfill    # day forecasts since 2025-10, for replay --night
+uv run dorfsteig-forecast run         # service
+```
+
+The controller reads these tables for the status page, the morning report
+and the night plan (`dorfsteig_control/night.py`): on cold days, the storage
+heaters charge from the grid overnight for tomorrow's heat need minus part
+of tomorrow's forecast PV.
 
 ## Energy, upstairs and costs
 
@@ -134,7 +156,7 @@ Services:
 sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now dorfsteig-ingest@power dorfsteig-ingest@iotawatt dorfsteig-ingest@climate \
-    dorfsteig-ingest@energy
+    dorfsteig-ingest@energy dorfsteig-ingest@weather dorfsteig-forecast
 sudo systemctl enable --now dorfsteig-datasette
 
 journalctl -u dorfsteig-ingest@power -f

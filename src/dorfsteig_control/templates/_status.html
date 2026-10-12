@@ -16,6 +16,7 @@
     <div class="value">{{ s.pv.power | watts }}</div>
     {% if today.pv_kwh is not none %}<div class="label">{{ "%.1f" | format(today.pv_kwh) }} kWh today</div>{% endif %}
     <div class="label">{% if s.pv.age_s is none %}no reading yet{% else %}{{ s.pv.age_s }} s old{% endif %}</div>
+    {% if outlook.today %}<div class="label">Forecast today {{ "%.0f" | format(outlook.today.pv_kwh) }} kWh{% if outlook.rest_kwh is not none %}, {{ "%.0f" | format(outlook.rest_kwh) }} still to come{% endif %}{% if outlook.tomorrow %} · tomorrow {{ "%.0f" | format(outlook.tomorrow.pv_kwh) }} kWh{% endif %}</div>{% endif %}
     {{ spark.pv }}<div class="label">last {{ spark.hours }} h</div>
   </article>
   <article>
@@ -28,6 +29,10 @@
     {{ spark.heating }}<div class="label">last {{ spark.hours }} h · water measured, space at most on-time × power</div>
     <div class="label">Outside today {% if s.outdoor.mean is none %}unknown{% else %}{{ "%.1f" | format(s.outdoor.mean) }} °C{% endif %}
       · room heaters: {{ s.outdoor.mode }}{% if s.outdoor.mode == "fit" %}, {{ "allowed" if s.outdoor.mean is not none and s.outdoor.mean < s.outdoor.limit else "not allowed" }} (limit {{ s.outdoor.limit }} °C){% endif %}</div>
+    {% if night.mode != "off" %}<div class="label">Night plan ({{ night.mode }}):
+      {% if night.plan and night.tonight %}{% if night.plan.grid_kwh > 0 %}{{ "%.1f" | format(night.plan.grid_kwh) }} kWh tonight, {{ night.plan.start | ts("%H:%M") }}–{{ night.plan.end | ts("%H:%M") }}{% else %}no charging tonight{% endif %}
+      {% elif night.plan %}last night {{ "%.1f" | format(night.plan.grid_kwh) }} kWh; tonight's plan at {{ night.charge_from.strftime("%H:%M") }}
+      {% else %}first plan at {{ night.charge_from.strftime("%H:%M") }}{% endif %}</div>{% endif %}
   </article>
 </div>
 

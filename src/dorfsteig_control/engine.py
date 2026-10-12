@@ -35,6 +35,11 @@ Fit mode for room heaters (`solar.mode == "fit"`) replaces step 2:
   controller can see whether it draws (see service.check_room_loads); one
   that doesn't is skipped for `no_load_skip_s` and switched off here.
 
+Night plan (see night.py): heaters in the plan are on during their
+window (reason "night plan") and switched off when it ends ("night plan
+done"). Schedules and overrides take precedence. It runs right after the
+schedules, so PV steps leave these heaters alone.
+
 Overrides (used by the wattage test) force a heater on or off and take it out
 of steps 1–2 until the override is removed. `hold_solar` pauses step 2 so a
 measurement isn't disturbed by other heaters switching.
@@ -50,7 +55,8 @@ from dorfsteig_control.heaters import HEATERS
 from dorfsteig_control.schedule import scheduled_heaters
 from dorfsteig_control.water import decide_water
 
-Reason = Literal["schedule", "solar", "override", "water pv", "water backup", "water safety", "stale data"]
+Reason = Literal["schedule", "solar", "override", "water pv", "water backup", "water safety", "stale data",
+                 "night plan"]
 
 
 @dataclass(frozen=True)
@@ -94,7 +100,13 @@ def decide(
     outdoor_mean: float | None = None,
     watts: Mapping[str, float] | None = None,
     room_skip: Mapping[str, float] | None = None,
+    night_windows: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[States, list[Event]]:
+    """New heater states and the switches that lead to them; see the module docstring.
+
+    `night_windows`: heater → (on from, off at) Unix times, from the night
+    plan; None or empty when the plan isn't live.
+    """
     overrides = overrides or {}
     water = config.water
     water_pv = water.mode == "pv"
@@ -135,6 +147,20 @@ def decide(
                 new[heater] = replace(state, reason="water pv")   # the water step decides from here
             else:
                 switch(heater, False, None, "schedule ended")
+
+    # Night plan
+    night_windows = night_windows or {}
+    for heater, state in list(new.items()):
+        if heater in overrides or heater in wanted:
+            continue
+        window = night_windows.get(heater)
+        in_window = window is not None and window[0] <= ts < window[1]
+        if in_window and not state.on:
+            switch(heater, True, "night plan", "night plan")
+        elif in_window and state.reason != "night plan":
+            new[heater] = replace(state, reason="night plan")   # e.g. on from PV: the plan holds it on now
+        elif not in_window and state.on and state.reason == "night plan":
+            switch(heater, False, None, "night plan done")
 
     # Water heaters on PV surplus, backup and safety
     solar = config.solar

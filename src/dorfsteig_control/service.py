@@ -26,6 +26,7 @@ from dorfsteig_control import outdoor, water, wattage
 from dorfsteig_control.config import ControlConfig, from_legacy
 from dorfsteig_control.engine import GridSample, States, decide
 from dorfsteig_control.heaters import BY_ID, HEATERS
+from dorfsteig_control.night import NightPlan, make_plan, night_of
 from dorfsteig_control.outputs import downstairs_payload, upstairs_payload
 from dorfsteig_control.report import daily_report, format_report
 from dorfsteig_control.store import Store
@@ -101,6 +102,9 @@ class Controller:
         self.room_skip: dict[str, float] = {}       # heater → skip until (drew nothing when switched on)
         self.load_checks: list[wattage.PendingSwitch] = []
 
+        # Night plan (night.py): the latest one made
+        self.night_plan: NightPlan | None = store.load_night_plan()
+
     # ---- inputs
 
     def on_grid_power(self, power: float) -> None:
@@ -134,10 +138,11 @@ class Controller:
         grid = GridSample(power=self.grid_power, age_s=now.timestamp() - self.grid_ts,
                           average=sum(recent) / len(recent) if recent else None)
         self.refresh_inputs(now)
+        self.update_night_plan(now)
         self.states, events = decide(self.states, self.config, now, grid, overrides=self.overrides,
                                      hold_solar=self.hold_solar, water_full=self.water_full,
                                      outdoor_mean=self.outdoor_mean, watts=self.watts,
-                                     room_skip=self.room_skip)
+                                     room_skip=self.room_skip, night_windows=self.night_windows("on"))
         self.run_shadow(now, grid)
 
         for e in events:
@@ -167,8 +172,9 @@ class Controller:
         when their thermostat wants, so they're left out of that adjustment.
         """
         water, solar = self.config.water, self.config.solar
+        night_windows = self.night_windows("shadow")
         shadowed = (set(water.heaters) if water.mode == "shadow" else set()) | \
-                   (set(solar.priority) if solar.mode == "shadow" else set())
+                   (set(solar.priority) if solar.mode == "shadow" else set()) | set(night_windows)
         if not shadowed:
             self.shadow_states = None
             return
@@ -186,7 +192,7 @@ class Controller:
         })
         states, events = decide(states, config, now, shifted, overrides=self.overrides,
                                 water_full=self.water_full, outdoor_mean=self.outdoor_mean,
-                                watts=self.watts, room_skip=self.room_skip)
+                                watts=self.watts, room_skip=self.room_skip, night_windows=night_windows)
         self.shadow_states = states
         events = [e for e in events if e.heater in shadowed]
         for e in events:
@@ -200,6 +206,28 @@ class Controller:
         if now.timestamp() - self.outdoor_checked > 600:
             self.outdoor_mean, self.outdoor_source = outdoor.today_mean(self.store.conn, now)
             self.outdoor_checked = now.timestamp()
+
+    def update_night_plan(self, now: datetime) -> None:
+        """Make the plan once per night, at the start of the charging window (or on the first tick in it)."""
+        params = self.config.night
+        if params.mode == "off":
+            return
+        night = night_of(now, params)
+        if night is None or (self.night_plan is not None and self.night_plan.night == night):
+            return
+        plan = self.store.load_night_plan(night)    # made before a restart
+        if plan is None:
+            no_load = {h for h in self.config.solar.priority if wattage.no_load(self.store.conn, h)}
+            plan = make_plan(self.store.conn, self.config, now, self.watts, no_load)
+            self.store.save_night_plan(plan)
+            log.info("Night plan (%s): %s", params.mode, plan.note)
+        self.night_plan = plan
+
+    def night_windows(self, mode: str) -> dict[str, tuple[float, float]]:
+        """The night plan's heater windows if night.mode is `mode` ("on" or "shadow"), else none."""
+        if self.night_plan is None or self.config.night.mode != mode:
+            return {}
+        return self.night_plan.windows()
 
     def check_room_loads(self, ts: float) -> None:
         """Room heaters switched on in fit mode: did the grid drop? If not, skip them for a while.

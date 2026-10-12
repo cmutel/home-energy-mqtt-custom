@@ -64,6 +64,8 @@ def data_sources(controller: "Controller") -> list[Source]:
                3 * 3600, 6 * 3600),
         Source("Weather forecast", "dorfsteig-ingest@weather, hourly",
                age(_latest(conn, "SELECT MAX(issued) FROM weather_forecast")), 2 * 3600, 6 * 3600),
+        Source("PV forecast", "dorfsteig-forecast, after each weather forecast",
+               age(_latest(conn, "SELECT MAX(issued) FROM day_forecast")), 2 * 3600, 6 * 3600),
     ]
     sources += [
         Source(f"Sensor {room}", "air quality / temperature",

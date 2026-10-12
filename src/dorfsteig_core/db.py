@@ -146,12 +146,50 @@ CREATE TABLE IF NOT EXISTS weather_forecast (
     cloud_cover  REAL,
     PRIMARY KEY (issued, ts, model)
 );
+-- For "the newest forecast for this hour" (dorfsteig_core.weather)
+CREATE INDEX IF NOT EXISTS weather_forecast_model_ts ON weather_forecast (model, ts, issued);
+"""
+
+# Written by dorfsteig_forecast (see its docstrings), read by the controller.
+# Models fitted to our history, one row per model ("pv", "base_load",
+# "heating"), parameters as JSON; refitted once a day.
+FORECAST_MODELS = """
+CREATE TABLE IF NOT EXISTS forecast_models (
+    name       TEXT NOT NULL PRIMARY KEY,
+    fitted_at  INTEGER NOT NULL,
+    params     TEXT NOT NULL      -- JSON
+);
+"""
+
+# PV forecast per hour, from the weather forecasts known at `issued`. Every
+# forecast is kept, like weather_forecast, so its skill can be checked.
+PV_FORECAST = """
+CREATE TABLE IF NOT EXISTS pv_forecast (
+    issued     INTEGER NOT NULL,  -- the hour the forecast was made, Unix time
+    ts         INTEGER NOT NULL,  -- start of the hour forecast
+    pv_wh      REAL NOT NULL,
+    PRIMARY KEY (issued, ts)
+);
+"""
+
+# Per local day, as forecast at `issued`. surplus_kwh is the PV beyond the
+# usual (non-heating) house load: roughly what storage heaters could take.
+DAY_FORECAST = """
+CREATE TABLE IF NOT EXISTS day_forecast (
+    issued       INTEGER NOT NULL,
+    day          TEXT NOT NULL,   -- ISO date, local
+    temperature  REAL,            -- °C, daily mean
+    pv_kwh       REAL,
+    base_kwh     REAL,            -- usual house load without heating
+    surplus_kwh  REAL,            -- sum over hours of max(0, PV - base load)
+    PRIMARY KEY (issued, day)
+);
 """
 
 DERIVED_TABLES = {"house_minutes": HOUSE_MINUTES, "energy_hourly": ENERGY_HOURLY}
 
 ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, WEATHER, WEATHER_FORECAST,
-              *DERIVED_TABLES.values()]
+              FORECAST_MODELS, PV_FORECAST, DAY_FORECAST, *DERIVED_TABLES.values()]
 
 
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:
@@ -162,6 +200,6 @@ def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     for ddl in ALL_TABLES:
-        conn.execute(ddl)
+        conn.executescript(ddl)
     conn.commit()
     return conn

@@ -5,12 +5,17 @@ channels. All usage is costed at the hour's import price (high or low
 tariff), whether the power came from the grid or from PV, so circuit costs
 add up to the cost of the whole house's consumption. PV export revenue is
 reported separately.
+
+Forecasts (if `dorfsteig-forecast` runs): the PV forecast for the day as it
+stood when the day began, today's forecast, and the night plan made that
+evening (night.py).
 """
 
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
+from dorfsteig_control import forecasts
 from dorfsteig_control.summary import DaySummary, day_summary
 
 # IoTaWatt channels, all on the downstairs panel
@@ -46,6 +51,9 @@ class Report:
     export_chf: float | None = None  # PV export revenue
     circuits: dict[str, list[float]] = field(default_factory=dict)  # name → [kWh, CHF]
     heating: DaySummary | None = None    # relay-controlled heaters (water measured, space at most)
+    pv_forecast_kwh: float | None = None  # the day's PV as forecast when it began
+    today: forecasts.DayForecast | None = None   # forecast for the day after (the report's "today")
+    night_plan: tuple[str, float, str] | None = None   # (mode, grid kWh, note) for the evening of the day
 
 
 def _add(total: float | None, value: float | None) -> float | None:
@@ -75,7 +83,18 @@ def daily_report(conn: sqlite3.Connection, day: date) -> Report:
     except sqlite3.OperationalError:
         return report
     # Up to the end of the day, or now if the day isn't over (heaters still on don't count ahead)
-    report.heating = day_summary(conn, min(datetime.combine(day, time.max), datetime.now()))
+    now = datetime.now()
+    report.heating = day_summary(conn, min(datetime.combine(day, time.max), now))
+
+    day_start = datetime.combine(day, time())
+    then = forecasts.day_forecast(conn, day, day_start)
+    report.pv_forecast_kwh = None if then is None else then.pv_kwh
+    report.today = forecasts.day_forecast(conn, day + timedelta(days=1), now)
+    try:
+        report.night_plan = conn.execute("SELECT mode, grid_kwh, note FROM night_plan WHERE night = ?",
+                                         (day.isoformat(),)).fetchone()
+    except sqlite3.OperationalError:
+        pass   # the controller hasn't created its tables (tests)
 
     for (ts, pv, exp, imp, house, down, up_water, up_other, price, imp_chf, exp_chf) in hourly:
         if imp is not None:
@@ -113,8 +132,10 @@ def format_report(r: Report) -> str:
 
     if r.hours == 0:
         return "No energy data for this day (is dorfsteig-ingest@energy running?)"
+    forecast = "" if r.pv_forecast_kwh is None else f" (forecast {r.pv_forecast_kwh:.0f})"
     lines = [
-        f"PV generated {r.pv_kwh:.1f} kWh, exported {r.export_kwh:.1f} kWh: revenue CHF {chf(r.export_chf)}",
+        f"PV generated {r.pv_kwh:.1f} kWh{forecast}, exported {r.export_kwh:.1f} kWh: "
+        f"revenue CHF {chf(r.export_chf)}",
         f"Usage {r.house_kwh:.1f} kWh: CHF {chf(r.usage_chf)} at tariff",
         f"Imported {r.import_kwh:.1f} kWh: CHF {chf(r.import_chf)}",
     ]
@@ -124,6 +145,12 @@ def format_report(r: Report) -> str:
         h = r.heating
         lines.append(f"Heating: water {h.water_kwh:.1f} kWh ({h.water_solar_kwh:.1f} from PV), "
                      f"space ≤{h.space_kwh:.1f} kWh ({h.space_solar_kwh:.1f} from PV)")
+    if r.night_plan is not None:
+        mode, grid_kwh, note = r.night_plan
+        shadow = " (shadow, not switched)" if mode == "shadow" else ""
+        lines.append(f"Night plan{shadow}: {grid_kwh:.1f} kWh from the grid. {note}")
+    if r.today is not None:
+        lines.append(f"Today's forecast: PV {r.today.pv_kwh:.0f} kWh, {r.today.temperature:.1f} °C mean")
     circuits = sorted(r.circuits.items(), key=lambda kv: -kv[1][0])
     circuits = [(name, kwh, cost) for name, (kwh, cost) in circuits if abs(kwh) >= 0.05]
     if circuits:

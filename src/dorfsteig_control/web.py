@@ -18,9 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
-from dorfsteig_control import wattage
+from dorfsteig_control import forecasts, wattage
 from dorfsteig_control.config import AlwaysOn, ControlConfig, DailyWindow, OneOff
 from dorfsteig_control.heaters import BY_ID, HEATERS
+from dorfsteig_control.night import night_of
 from dorfsteig_control.outputs import downstairs_payload, legacy_status, upstairs_payload
 from dorfsteig_control.schedule import rule_active
 from dorfsteig_control.service import Controller
@@ -141,12 +142,35 @@ def create_app(controller: Controller) -> FastAPI:
         except sqlite3.OperationalError:
             return []
 
+    def pv_outlook(now: datetime) -> dict:
+        """Forecast PV for today (total, and what's still to come) and tomorrow."""
+        conn = controller.store.conn
+        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+        return {
+            "today": forecasts.day_forecast(conn, now.date(), now),
+            "rest_kwh": forecasts.pv_remaining_kwh(conn, now, midnight),
+            "tomorrow": forecasts.day_forecast(conn, now.date() + timedelta(days=1), now),
+        }
+
+    def night_context(now: datetime) -> dict:
+        """The night plan to show: tonight's (or last night's, until the evening) if night mode isn't off."""
+        params = controller.config.night
+        plan = controller.night_plan
+        return {
+            "mode": params.mode,
+            "plan": plan if params.mode != "off" else None,
+            "tonight": plan is not None and plan.night == night_of(now, params),
+            "charge_from": params.charge_from,
+        }
+
     def status_context() -> dict:
         now = datetime.now()
         end = now.timestamp()
         start = end - SPARK_HOURS * 3600
         space, water = heating_power(controller.store.conn, start, end, controller.dry_run)
         return {
+            "outlook": pv_outlook(now),
+            "night": night_context(now),
             "spark": {
                 "grid": sparkline(minute_series("grid_readings", "power", start), start, end, "grid"),
                 "pv": sparkline(minute_series("inverter_readings", "power_ac", start), start, end, "pv"),
@@ -230,10 +254,27 @@ def create_app(controller: Controller) -> FastAPI:
 
     @app.get(f"{PREFIX}/solar", response_class=HTMLResponse)
     async def solar(request: Request) -> HTMLResponse:
+        now = datetime.now()
         return page(request, "solar.html", solar=controller.config.solar, water=controller.config.water,
                     water_full=controller.water_full,
                     outdoor=(controller.outdoor_mean, controller.outdoor_source),
-                    room_skip={h: t for h, t in controller.room_skip.items() if t > time.time()})
+                    room_skip={h: t for h, t in controller.room_skip.items() if t > time.time()},
+                    night_params=controller.config.night, night=night_context(now),
+                    outlook=pv_outlook(now), fitted=forecasts.fitted_heating(controller.store.conn))
+
+    @app.post(f"{PREFIX}/solar/night")
+    async def night_save(
+        mode: str = Form(), charge_from: str = Form(), charge_until: str = Form(),
+        kwh_per_degree: float = Form(), pv_credit: float = Form(), min_kwh: float = Form(),
+    ) -> RedirectResponse:
+        def change(c: ControlConfig) -> None:
+            c.night.mode = mode
+            c.night.charge_from = charge_from
+            c.night.charge_until = charge_until
+            c.night.kwh_per_degree = kwh_per_degree
+            c.night.pv_credit = pv_credit
+            c.night.min_kwh = min_kwh
+        return edit("/solar", change, "Night plan settings saved")
 
     @app.post(f"{PREFIX}/solar/water")
     async def water_save(

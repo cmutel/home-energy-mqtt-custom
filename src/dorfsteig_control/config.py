@@ -148,6 +148,32 @@ class WaterParams(_Model):
         return v
 
 
+NightMode = Literal["off", "shadow", "on"]
+
+
+class NightParams(_Model):
+    """Charging the room (storage) heaters from the grid overnight before cold days (see night.py).
+
+    off: no grid charging (fit mode still charges from PV).
+    shadow: the plan is made every evening and shown, and what it would
+        switch is logged, but nothing is switched.
+    on: the plan's heaters are switched on from `charge_from`.
+    """
+
+    mode: NightMode = "off"
+    charge_from: time = time(20, 0)      # the low tariff starts at 20:00 every day
+    charge_until: time = time(7, 0)      # and ends at 07:00 (on weekdays and Saturdays)
+    kwh_per_degree: float = 1.7          # heat per day for each °C tomorrow is colder than solar.temp_limit
+    pv_credit: float = 0.2               # share of tomorrow's forecast PV surplus counted as heat
+    min_kwh: float = 2.0                 # don't charge for less than this
+
+    @model_validator(mode="after")
+    def _crosses_midnight(self) -> "NightParams":
+        if self.charge_from <= self.charge_until:
+            raise ValueError("The charging window must cross midnight (e.g. 20:00 to 07:00)")
+        return self
+
+
 class NotifySettings(_Model):
     """Pushover messages. Alerts (stale data, boards offline, wattage drift) are always sent."""
 
@@ -165,6 +191,7 @@ class ControlConfig(_Model):
     rules: list[Rule] = Field(default_factory=list)
     solar: SolarParams = Field(default_factory=SolarParams)
     water: WaterParams = Field(default_factory=WaterParams)
+    night: NightParams = Field(default_factory=NightParams)
     notify: NotifySettings = Field(default_factory=NotifySettings)
 
 

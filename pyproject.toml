@@ -33,6 +33,7 @@ ml = [
 [project.scripts]
 dorfsteig-ingest = "dorfsteig_ingest.cli:main"
 dorfsteig-control = "dorfsteig_control.cli:main"
+dorfsteig-forecast = "dorfsteig_forecast.cli:main"
 
 [dependency-groups]
 dev = [

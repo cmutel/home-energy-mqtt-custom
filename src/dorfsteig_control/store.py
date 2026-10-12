@@ -5,14 +5,17 @@
 - control_events: every switch, with the reason and grid power at the time
 - heater_power:   wattage measurements (see wattage.py)
 - water_tank:     when each water heater was last seen full (see water.py)
+- night_plan:     the night plan made each evening (see night.py)
 """
 
 import sqlite3
 import time
+from datetime import date
 
 from dorfsteig_control import wattage
 from dorfsteig_control.config import ControlConfig, default_config
 from dorfsteig_control.engine import Event, HeaterState, States, initial_states
+from dorfsteig_control.night import NightPlan
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS control_config (
@@ -39,6 +42,19 @@ CREATE INDEX IF NOT EXISTS control_events_ts ON control_events (ts);
 CREATE TABLE IF NOT EXISTS water_tank (
     heater     TEXT PRIMARY KEY,
     last_full  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS night_plan (
+    night        TEXT PRIMARY KEY,  -- ISO date of the evening charging starts
+    made_at      REAL NOT NULL,
+    mode         TEXT NOT NULL,     -- "shadow" or "on"
+    temperature  REAL,              -- tomorrow's forecast mean, °C
+    need_kwh     REAL NOT NULL,
+    surplus_kwh  REAL,              -- tomorrow's forecast PV surplus
+    grid_kwh     REAL NOT NULL,
+    heaters      TEXT NOT NULL,     -- comma-separated heater ids
+    start        REAL NOT NULL,
+    end          REAL NOT NULL,
+    note         TEXT NOT NULL
 );
 """
 
@@ -90,6 +106,31 @@ class Store:
     def save_water_full(self, heater: str, ts: float) -> None:
         self.conn.execute("INSERT OR REPLACE INTO water_tank (heater, last_full) VALUES (?, ?)", (heater, ts))
         self.conn.commit()
+
+    # ---- night plan
+
+    def save_night_plan(self, plan: NightPlan) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO night_plan (night, made_at, mode, temperature, need_kwh, surplus_kwh, "
+            "grid_kwh, heaters, start, end, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (plan.night.isoformat(), plan.made_at, plan.mode, plan.temperature, plan.need_kwh,
+             plan.surplus_kwh, plan.grid_kwh, ",".join(plan.heaters), plan.start, plan.end, plan.note),
+        )
+        self.conn.commit()
+
+    def load_night_plan(self, night: date | None = None) -> NightPlan | None:
+        """The plan for `night`, or the latest one if None."""
+        query = ("SELECT night, made_at, mode, temperature, need_kwh, surplus_kwh, grid_kwh, heaters, "
+                 "start, end, note FROM night_plan")
+        if night is None:
+            row = self.conn.execute(query + " ORDER BY night DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute(query + " WHERE night = ?", (night.isoformat(),)).fetchone()
+        if row is None:
+            return None
+        night_text, made_at, mode, temperature, need, surplus, grid, heaters, start, end, note = row
+        return NightPlan(date.fromisoformat(night_text), made_at, mode, temperature, need, surplus, grid,
+                         heaters.split(",") if heaters else [], start, end, note)
 
     # ---- events
 

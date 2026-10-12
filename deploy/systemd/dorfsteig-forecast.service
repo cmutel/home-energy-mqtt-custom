@@ -1,0 +1,21 @@
+# PV and day forecasts for the controller (see src/dorfsteig_forecast/daily.py).
+#   sudo cp deploy/systemd/dorfsteig-forecast.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dorfsteig-forecast
+[Unit]
+Description=Dorfsteig forecasts: PV and heating demand
+Documentation=https://github.com/cmutel/home-energy-mqtt-custom
+After=network-online.target
+
+[Service]
+Type=simple
+User=cmutel
+WorkingDirectory=/home/cmutel/dorfsteig
+EnvironmentFile=/home/cmutel/dorfsteig/.env
+ExecStart=/home/cmutel/dorfsteig/.venv/bin/dorfsteig-forecast run
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -212,11 +212,71 @@ less (54 vs 69 kWh on the 83 days with water data).
   each heater. Morning report: PV used by water and storage heaters, and
   what it saved.
 
-### 4. Forecasts and machine learning
+### 4. Forecasts and night plan (code done 2026-10-12)
 
-- Open-Meteo forecasts and historical archive (radiation, temperature).
-- First model: PV from forecast radiation, compared against a simple
-  baseline. Then house load and heating demand.
-- Forecaster writes a daily plan to SQLite; the controller follows it but
-  keeps its own safety limits and falls back to rules without a plan.
-- Train in notebooks on the Mac; run inference on the Pi.
+Where forecasts pay off: not for the water heaters (the replay showed that).
+They matter for knowing today's and tomorrow's PV, and for winter, when the
+storage heaters need charging regardless of PV: how much from the grid, and
+how much to leave for PV. The tariff spread is small (2.2 Rp in 2026, none
+in 2027), so the main value is using PV, not shifting to the low tariff.
+
+Design: `dorfsteig-forecast` only predicts and writes tables; the controller
+reads them and makes the heating decisions (it already knows the heaters,
+their wattages and what PV gave today). Without forecasts the controller
+still runs; the night plan then credits no PV.
+
+#### 4a. PV forecast (code done)
+
+- [x] `dorfsteig_forecast/pv.py`: forecast radiation × a factor per (week,
+      hour UTC), fitted to day-ahead ICON-CH2 forecasts against our PV.
+- [x] `pv_forecast` (hourly) and `day_forecast` (per day), written after
+      each weather forecast; models refitted daily into `forecast_models`.
+- [x] Status page (today, still to come, tomorrow); morning report
+      (yesterday's forecast vs actual, today's forecast); data source light.
+- [ ] Deploy `dorfsteig-forecast`.
+
+Findings (`notebooks/pv_model.py`, month left out at a time, 2025-10 to
+2026-10, mean PV 31 kWh/day): daily MAE 5.9 kWh for the ratio, 5.8 for
+gradient boosting, 7.1 for a single factor, 10.4 for the monthly mean. With
+perfect (measured) radiation it would be ~5.4, so most of the error is the
+weather forecast. Gradient boosting isn't worth the extra dependencies.
+
+#### 4b. Load and heating demand (code done)
+
+- [x] `dorfsteig_forecast/load.py`: base load per hour (warm days of the
+      last year, 28.7 kWh/day) and house use against degrees below 15 °C:
+      1.7 kWh/day per °C, base 31 kWh/day, ±10 kWh/day scatter (heating by
+      hand, the wood stove).
+- [ ] Per heater, once the controller has logged a winter.
+
+#### 4c. Night plan (code done)
+
+- [x] `dorfsteig_control/night.py`: at 20:00, tomorrow's need =
+      kwh_per_degree × (temp_limit - tomorrow's forecast mean), minus
+      pv_credit × tomorrow's forecast PV surplus; the rest from the grid,
+      all available heaters from 20:00 (low tariff), never past 07:00.
+- [x] Modes off / shadow / on on the Solar page; plan stored in
+      `night_plan`, shown on the status and Solar pages and in the morning
+      report.
+- [ ] Shadow when the first cold days come, then on.
+
+#### 4d. Winter replay (code done)
+
+- [x] `dorfsteig-control replay --night`, day by day over the days with
+      archived forecasts (from 2025-10; none older exist).
+
+Findings (176 days, 112 below 15 °C, 1700 kWh of heat needed): on heating
+days the heaters could have taken only 23% of the forecast PV surplus, and
+almost nothing November-February: the house uses more than the warm-day base
+load, and hand heating already took some PV. So pv_credit 0.2 (not 1). Costs
+hardly differ (pv_credit 0: CHF 436, 0.2: CHF 425, perfect foresight: CHF
+404, with heat left short priced at the high tariff); the choice is between
+a slightly colder house and more night charging. The temperature forecast
+(MAE 0.9 °C, ~1.6 kWh of need) and the rough need model matter more than
+the PV forecast.
+
+### 5. Next
+
+- Tune from the shadow logs: temperature limit, kwh_per_degree, pv_credit.
+- Water temperature sensors: replace "full" detection.
+- Per-heater heat need, once a winter of relay and IoTaWatt data exists.
