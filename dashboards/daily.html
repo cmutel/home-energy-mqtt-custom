@@ -1,50 +1,33 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <title>Daily Energy — Home Energy</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
-    h1 { margin: 0 0 16px; font-size: 1.4rem; }
-    nav { margin-bottom: 16px; }
-    nav a {
-      display: inline-block; padding: 6px 14px; margin-right: 6px;
-      background: white; border-radius: 4px; text-decoration: none;
-      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
-    }
-    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
-    nav a:hover:not(.active) { background: #e8e8e8; }
-    .controls {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
-      background: white; padding: 12px 16px; border-radius: 6px;
-    }
-    .controls label { font-weight: bold; }
-    input[type=date] { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
-    button {
-      font-size: 1rem; padding: 4px 14px; cursor: pointer;
-      border: 1px solid #ccc; border-radius: 4px; background: white;
-    }
-    button:hover { background: #e8e8e8; }
-    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
-    #chart  { background: white; border-radius: 6px; padding: 8px; margin-bottom: 16px; }
-    #totals { background: white; border-radius: 6px; padding: 8px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="pico.min.css">
+  <link rel="stylesheet" href="dashboards.css">
 </head>
 <body>
+<main class="container">
   <nav>
-    <a href="daily.html" class="active">Daily consumption</a>
-    <a href="power.html">Solar &amp; grid</a>
-    <a href="energy.html">Energy &amp; costs</a>
-    <a href="climate.html">Air quality</a>
+    <ul><li><strong>Dorfsteig dashboards</strong></li></ul>
+    <ul>
+      <li><a href="/heating/">Heating</a></li>
+      <li><a href="daily.html" aria-current="page">Daily consumption</a></li>
+      <li><a href="power.html">Solar &amp; grid</a></li>
+      <li><a href="energy.html">Energy &amp; costs</a></li>
+      <li><a href="climate.html">Air quality</a></li>
+      <li><a href="learning.html">Learning</a></li>
+      <li><a href="status.html">Status</a></li>
+    </ul>
   </nav>
   <h1>Daily Energy Consumption</h1>
   <div class="controls">
     <label for="day">Day</label>
-    <button id="prev">&#9664;</button>
+    <button id="prev" class="outline">&#9664;</button>
     <input type="date" id="day" value="">
-    <button id="next">&#9654;</button>
+    <button id="next" class="outline">&#9654;</button>
     <span id="status"></span>
   </div>
   <div id="chart"></div>
@@ -200,5 +183,6 @@
     dayInput.value = formatLocalDate(new Date());
     load(dayInput.value);
   </script>
+</main>
 </body>
 </html>

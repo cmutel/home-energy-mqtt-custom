@@ -20,3 +20,13 @@ def test_newest_forecast_known_at_the_time_and_best_model(tmp_path: Path):
     assert (hours[HOUR].model, hours[HOUR].temperature, hours[HOUR].radiation) == ("icon_ch2", 6.0, 200)
     assert hours[HOUR + 3600].model == "best_match"
     assert HOUR + 7200 not in hours
+
+
+def test_old_pv_forecast_table_is_replaced(tmp_path: Path):
+    path = tmp_path / "t.sqlite"
+    old = init_db(path)
+    old.execute("DROP TABLE pv_forecast")
+    old.execute("CREATE TABLE pv_forecast (issued INTEGER, ts INTEGER, pv_wh REAL, PRIMARY KEY (issued, ts))")
+    old.commit()
+    columns = [row[1] for row in init_db(path).execute("PRAGMA table_info(pv_forecast)")]
+    assert columns == ["model", "ts", "issued", "pv_wh"]

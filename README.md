@@ -91,9 +91,15 @@ beyond it). The models are refitted daily from the history and stored in
 
 ```bash
 uv run dorfsteig-forecast fit         # refit now and print the models
-uv run dorfsteig-forecast backfill    # day forecasts since 2025-10, for replay --night
+uv run dorfsteig-forecast backfill    # past day forecasts (replay --night) and hourly PV forecasts
 uv run dorfsteig-forecast run         # service
 ```
+
+The Learning dashboard (`dashboards/learning.html`) charts forecasts against
+measurements for any day, with their errors. Each chart is one entry in its
+`QUANTITIES` list: a new forecast model or measurement is one more series
+there (a SQL query returning `ts, value` per hour). PV models are told apart
+by `pv_forecast.model`.
 
 The controller reads these tables for the status page, the morning report
 and the night plan (`dorfsteig_control/night.py`): on cold days, the storage

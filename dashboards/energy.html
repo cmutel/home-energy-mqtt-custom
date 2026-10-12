@@ -1,49 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <title>Energy &amp; Costs — Home Energy</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
-    h1 { margin: 0 0 16px; font-size: 1.4rem; }
-    h2 { margin: 0 0 8px; font-size: 1.1rem; }
-    nav { margin-bottom: 16px; }
-    nav a {
-      display: inline-block; padding: 6px 14px; margin-right: 6px;
-      background: white; border-radius: 4px; text-decoration: none;
-      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
-    }
-    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
-    nav a:hover:not(.active) { background: #e8e8e8; }
-    .controls {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
-      background: white; padding: 12px 16px; border-radius: 6px;
-    }
-    .controls label { font-weight: bold; }
-    input, select { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
-    button {
-      font-size: 1rem; padding: 4px 14px; cursor: pointer;
-      border: 1px solid #ccc; border-radius: 4px; background: white;
-    }
-    button:hover { background: #e8e8e8; }
-    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
-    .panel { background: white; border-radius: 6px; padding: 12px; margin-bottom: 16px; }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .row .panel { flex: 1; min-width: 320px; }
-    table { border-collapse: collapse; width: 100%; }
-    td, th { padding: 4px 8px; text-align: right; border-bottom: 1px solid #eee; }
-    td:first-child, th:first-child { text-align: left; }
-    .note { color: #888; font-size: 0.85rem; margin-top: 8px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="pico.min.css">
+  <link rel="stylesheet" href="dashboards.css">
 </head>
 <body>
+<main class="container">
   <nav>
-    <a href="daily.html">Daily consumption</a>
-    <a href="power.html">Solar &amp; grid</a>
-    <a href="energy.html" class="active">Energy &amp; costs</a>
-    <a href="climate.html">Air quality</a>
+    <ul><li><strong>Dorfsteig dashboards</strong></li></ul>
+    <ul>
+      <li><a href="/heating/">Heating</a></li>
+      <li><a href="daily.html">Daily consumption</a></li>
+      <li><a href="power.html">Solar &amp; grid</a></li>
+      <li><a href="energy.html" aria-current="page">Energy &amp; costs</a></li>
+      <li><a href="climate.html">Air quality</a></li>
+      <li><a href="learning.html">Learning</a></li>
+      <li><a href="status.html">Status</a></li>
+    </ul>
   </nav>
   <h1>Energy &amp; Costs</h1>
   <div class="controls">
@@ -51,10 +28,10 @@
       <option value="month">Month (by day)</option>
       <option value="year">Year (by month)</option>
     </select>
-    <button id="prev">&#9664;</button>
+    <button id="prev" class="outline">&#9664;</button>
     <input type="month" id="month">
     <input type="number" id="year" min="2023" max="2100" style="width: 6em; display: none">
-    <button id="next">&#9654;</button>
+    <button id="next" class="outline">&#9654;</button>
     <span id="status"></span>
   </div>
   <div class="panel"><h2>Consumption and PV</h2><div id="usage"></div></div>
@@ -257,5 +234,6 @@
     document.getElementById('next').addEventListener('click', () => shift(+1));
     load();
   </script>
+</main>
 </body>
 </html>

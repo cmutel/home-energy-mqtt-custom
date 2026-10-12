@@ -1,52 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <title>Status — Home Energy</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
-    h1 { margin: 0 0 16px; font-size: 1.4rem; }
-    nav { margin-bottom: 16px; }
-    nav a {
-      display: inline-block; padding: 6px 14px; margin-right: 6px;
-      background: white; border-radius: 4px; text-decoration: none;
-      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
-    }
-    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
-    nav a:hover:not(.active) { background: #e8e8e8; }
-
-    .card {
-      background: white; border-radius: 6px; padding: 16px 20px;
-      margin-bottom: 16px;
-    }
-    .card h2 { margin: 0 0 12px; font-size: 1rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
-
-    table { width: 100%; border-collapse: collapse; }
-    th { text-align: left; font-size: 0.8rem; color: #888; padding: 4px 8px; border-bottom: 1px solid #eee; }
-    td { padding: 8px; border-bottom: 1px solid #f5f5f5; font-size: 0.95rem; }
-    tr:last-child td { border-bottom: none; }
-
-    .dot {
-      display: inline-block; width: 10px; height: 10px;
-      border-radius: 50%; margin-right: 8px; vertical-align: middle;
-    }
-    .green  { background: #54a24b; }
-    .yellow { background: #f5a623; }
-    .red    { background: #e45756; }
-    .grey   { background: #aaa; }
-
-    #refresh-note { color: #aaa; font-size: 0.8rem; margin-top: 4px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="pico.min.css">
+  <link rel="stylesheet" href="dashboards.css">
 </head>
 <body>
+<main class="container">
   <nav>
-    <a href="daily.html">Daily consumption</a>
-    <a href="power.html">Solar &amp; grid</a>
-    <a href="energy.html">Energy &amp; costs</a>
-    <a href="climate.html">Air quality</a>
-    <a href="status.html" class="active">Status</a>
+    <ul><li><strong>Dorfsteig dashboards</strong></li></ul>
+    <ul>
+      <li><a href="/heating/">Heating</a></li>
+      <li><a href="daily.html">Daily consumption</a></li>
+      <li><a href="power.html">Solar &amp; grid</a></li>
+      <li><a href="energy.html">Energy &amp; costs</a></li>
+      <li><a href="climate.html">Air quality</a></li>
+      <li><a href="learning.html">Learning</a></li>
+      <li><a href="status.html" aria-current="page">Status</a></li>
+    </ul>
   </nav>
   <h1>System Status</h1>
   <p id="refresh-note"></p>
@@ -169,5 +143,6 @@
     load();
     setInterval(load, 30000);
   </script>
+</main>
 </body>
 </html>

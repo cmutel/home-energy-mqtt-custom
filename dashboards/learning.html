@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <title>Learning — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="pico.min.css">
+  <link rel="stylesheet" href="dashboards.css">
+</head>
+<body>
+<main class="container">
+  <nav>
+    <ul><li><strong>Dorfsteig dashboards</strong></li></ul>
+    <ul>
+      <li><a href="/heating/">Heating</a></li>
+      <li><a href="daily.html">Daily consumption</a></li>
+      <li><a href="power.html">Solar &amp; grid</a></li>
+      <li><a href="energy.html">Energy &amp; costs</a></li>
+      <li><a href="climate.html">Air quality</a></li>
+      <li><a href="learning.html" aria-current="page">Learning</a></li>
+      <li><a href="status.html">Status</a></li>
+    </ul>
+  </nav>
+  <h1>Learning: forecasts vs measurements</h1>
+  <div class="controls">
+    <label for="day">Day</label>
+    <button id="prev" class="outline">&#9664;</button>
+    <input type="date" id="day" value="">
+    <button id="next" class="outline">&#9654;</button>
+    <label for="lead">Forecast</label>
+    <select id="lead">
+      <option value="0">newest before each hour</option>
+      <option value="6">made at least 6 h ahead</option>
+      <option value="24">made at least 24 h ahead (day ahead)</option>
+      <option value="48">made at least 48 h ahead</option>
+    </select>
+    <span id="status"></span>
+  </div>
+  <div id="charts"></div>
+  <div class="panel"><h2>Forecast errors</h2><table id="errors"></table></div>
+  <p class="note">
+    Solid lines are measurements, dashed lines forecasts. For each hour the page shows the newest forecast
+    that had been made the chosen time ahead (and, for hours still to come, before now). Errors compare each
+    forecast with the first measurement listed for that chart, over the hours both have. Forecasts are kept
+    from 2025-10 (weather) and from when <code>dorfsteig-forecast</code> started (PV; earlier days are
+    backfilled 24 h ahead).
+  </p>
+
+  <script>
+    const API = '/datasette';
+
+    // ---- What to show. To add a forecast model or a kind of measurement, add an entry here.
+    //
+    // Every series is one SQL query returning (ts, value) per hour, ts = start of the hour (Unix time).
+    // Queries may use :start and :end (the day, Unix time), :lead (seconds ahead a forecast must have
+    // been made) and :now. Datasette passes them as text: compare them with columns, or CAST them.
+    // Helpers below build the usual queries.
+
+    // The newest forecast for each hour from `table`, made at least :lead before the hour and not after now.
+    function newestForecast(table, filter, valueExpr) {
+      return `
+        SELECT f.ts, ${valueExpr} AS value FROM ${table} f
+        WHERE ${filter} AND f.ts >= :start AND f.ts < :end
+          AND f.issued = (SELECT MAX(issued) FROM ${table}
+                          WHERE model = f.model AND ts = f.ts AND issued <= MIN(f.ts - CAST(:lead AS INTEGER), CAST(:now AS INTEGER)))`;
+    }
+    const weatherForecast = (model, column) =>
+      newestForecast('weather_forecast', `f.model = '${model}'`, `f.${column}`);
+    const pvForecast = (model) =>
+      newestForecast('pv_forecast', `f.model = '${model}'`, 'f.pv_wh / 1000.0');
+    const observation = (source, column) => `
+      SELECT ts, ${column} AS value FROM weather
+      WHERE source = '${source}' AND ts >= :start AND ts < :end`;
+
+    const QUANTITIES = [
+      {
+        title: 'Temperature', unit: '°C', total: null,
+        measured: [
+          { name: 'MeteoSwiss station', color: '#222', sql: observation('meteoswiss', 'temperature') },
+          { name: 'Balcony sensor', color: '#888', sql: `
+              SELECT ts / 3600 * 3600 AS ts, AVG(temperature) AS value FROM air_quality
+              WHERE room = 'balkon' AND ts >= :start AND ts < :end GROUP BY ts / 3600` },
+          { name: 'ERA5 reanalysis', color: '#bbb', sql: observation('era5', 'temperature') },
+        ],
+        forecasts: [
+          { name: 'ICON-CH1', color: '#e45756', sql: weatherForecast('icon_ch1', 'temperature') },
+          { name: 'ICON-CH2', color: '#4c78a8', sql: weatherForecast('icon_ch2', 'temperature') },
+          { name: 'Open-Meteo best match', color: '#54a24b', sql: weatherForecast('best_match', 'temperature') },
+        ],
+      },
+      {
+        // Hourly mean W/m²; summed over the day ÷ 1000 = kWh/m²
+        title: 'Solar radiation', unit: 'W/m²', total: { unit: 'kWh/m²', factor: 1 / 1000 },
+        measured: [
+          { name: 'MeteoSwiss station', color: '#222', sql: observation('meteoswiss', 'radiation') },
+          { name: 'ERA5 reanalysis', color: '#bbb', sql: observation('era5', 'radiation') },
+        ],
+        forecasts: [
+          { name: 'ICON-CH1', color: '#e45756', sql: weatherForecast('icon_ch1', 'radiation') },
+          { name: 'ICON-CH2', color: '#4c78a8', sql: weatherForecast('icon_ch2', 'radiation') },
+          { name: 'Open-Meteo best match', color: '#54a24b', sql: weatherForecast('best_match', 'radiation') },
+        ],
+      },
+      {
+        // kWh in the hour = mean kW over the hour; summed over the day = kWh
+        title: 'PV', unit: 'kW', total: { unit: 'kWh', factor: 1 },
+        measured: [
+          { name: 'Inverter', color: '#222', sql: `
+              SELECT ts, pv_wh / 1000.0 AS value FROM energy_hourly
+              WHERE ts >= :start AND ts < :end AND pv_wh IS NOT NULL` },
+        ],
+        forecasts: [
+          { name: 'Ratio model', color: '#f58518', sql: pvForecast('ratio') },
+        ],
+      },
+    ];
+
+    // ---- Loading
+
+    async function query(sql, params) {
+      const url = new URL(`${API}/dorfsteig.json`, location.origin);
+      url.searchParams.set('sql', sql);
+      url.searchParams.set('_shape', 'array');
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+      const response = await fetch(url);
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error(rows.error || 'query failed');
+      // ts → value, skipping missing values
+      const values = new Map();
+      for (const row of rows) if (row.value !== null) values.set(row.ts, row.value);
+      return values;
+    }
+
+    function dayRange(day) {
+      // Local midnights, so days with a daylight saving change have 23 or 25 hours
+      const start = new Date(day + 'T00:00:00');
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      return { start: start.getTime() / 1000, end: end.getTime() / 1000 };
+    }
+
+    async function load() {
+      const day = dayInput.value;
+      const { start, end } = dayRange(day);
+      const params = { start, end, lead: leadInput.value * 3600, now: Math.floor(Date.now() / 1000) };
+      status.textContent = 'Loading…';
+      const errorRows = [];
+      try {
+        for (const [i, quantity] of QUANTITIES.entries()) {
+          const series = [...quantity.measured.map(s => ({ ...s, kind: 'measured' })),
+                          ...quantity.forecasts.map(s => ({ ...s, kind: 'forecast' }))];
+          const results = await Promise.all(series.map(s => query(s.sql, params)));
+          series.forEach((s, j) => { s.values = results[j]; });
+          drawChart(`chart-${i}`, quantity, series, params);
+          errorRows.push(...errors(quantity, series));
+        }
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        return;
+      }
+      drawErrors(errorRows);
+      status.textContent = '';
+    }
+
+    // ---- Charts
+
+    function createChartDivs() {
+      const container = document.getElementById('charts');
+      QUANTITIES.forEach((quantity, i) => {
+        const panel = document.createElement('div');
+        panel.className = 'panel';
+        panel.innerHTML = `<h2>${quantity.title} (${quantity.unit})</h2><div id="chart-${i}"></div>`;
+        container.appendChild(panel);
+      });
+    }
+
+    function drawChart(id, quantity, series, params) {
+      const traces = series.filter(s => s.values.size > 0).map(s => {
+        const stamps = [...s.values.keys()].sort((a, b) => a - b);
+        return {
+          x: stamps.map(ts => new Date(ts * 1000)),
+          y: stamps.map(ts => s.values.get(ts)),
+          name: s.kind === 'forecast' ? `${s.name} (forecast)` : s.name,
+          mode: 'lines',
+          line: { color: s.color, width: s.kind === 'measured' ? 2 : 1.5,
+                  dash: s.kind === 'forecast' ? 'dash' : 'solid', shape: 'spline' },
+          hovertemplate: `%{y:.1f} ${quantity.unit}<extra>${s.name}</extra>`,
+        };
+      });
+      const shapes = [];
+      if (params.now > params.start && params.now < params.end) {
+        shapes.push({ type: 'line', xref: 'x', yref: 'paper', y0: 0, y1: 1,
+                      x0: new Date(params.now * 1000), x1: new Date(params.now * 1000),
+                      line: { color: '#aaa', width: 1, dash: 'dot' } });
+      }
+      Plotly.react(id, traces, {
+        xaxis: { type: 'date', range: [new Date(params.start * 1000), new Date(params.end * 1000)] },
+        yaxis: { title: quantity.unit },
+        shapes,
+        hovermode: 'x unified',
+        margin: { t: 10, r: 20, b: 40, l: 60 },
+        height: 320,
+      }, { responsive: true });
+    }
+
+    // ---- Errors
+
+    function errors(quantity, series) {
+      const reference = series.find(s => s.kind === 'measured' && s.values.size > 0);
+      if (!reference) return [];
+      return series.filter(s => s.kind === 'forecast' && s.values.size > 0).map(forecast => {
+        let n = 0, sumAbs = 0, sum = 0, totalForecast = 0, totalMeasured = 0;
+        for (const [ts, measured] of reference.values) {
+          if (!forecast.values.has(ts)) continue;
+          const difference = forecast.values.get(ts) - measured;
+          n += 1;
+          sumAbs += Math.abs(difference);
+          sum += difference;
+          totalForecast += forecast.values.get(ts);
+          totalMeasured += measured;
+        }
+        return { quantity, forecast: forecast.name, reference: reference.name, n,
+                 mae: n ? sumAbs / n : null, bias: n ? sum / n : null,
+                 totalForecast, totalMeasured };
+      });
+    }
+
+    function drawErrors(rows) {
+      const format = (value, digits = 1) => value === null ? '–' : value.toFixed(digits);
+      const lines = rows.map(r => {
+        const total = r.quantity.total;
+        const totals = total && r.n
+          ? `${format(r.totalForecast * total.factor)} vs ${format(r.totalMeasured * total.factor)} ${total.unit}`
+          : '';
+        return `<tr><td>${r.quantity.title}</td><td>${r.forecast}</td><td>${r.reference}</td><td>${r.n}</td>
+                <td>${format(r.mae)} ${r.quantity.unit}</td><td>${r.bias > 0 ? '+' : ''}${format(r.bias)}</td>
+                <td>${totals}</td></tr>`;
+      });
+      document.getElementById('errors').innerHTML =
+        '<thead><tr><th>What</th><th>Forecast</th><th>Measured by</th><th>Hours</th>' +
+        '<th>Mean error</th><th>Bias</th><th>Day total, forecast vs measured</th></tr></thead>' +
+        `<tbody>${lines.join('') || '<tr><td colspan="7">No hours with both a forecast and a measurement</td></tr>'}</tbody>`;
+    }
+
+    // ---- Controls
+
+    const dayInput = document.getElementById('day');
+    const leadInput = document.getElementById('lead');
+    const status = document.getElementById('status');
+
+    function formatLocalDate(d) {
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}-${month}-${day}`;
+    }
+
+    function shiftDay(delta) {
+      const d = new Date(dayInput.value + 'T00:00:00');
+      d.setDate(d.getDate() + delta);
+      dayInput.value = formatLocalDate(d);
+      load();
+    }
+
+    dayInput.addEventListener('change', load);
+    leadInput.addEventListener('change', load);
+    document.getElementById('prev').addEventListener('click', () => shiftDay(-1));
+    document.getElementById('next').addEventListener('click', () => shiftDay(+1));
+
+    createChartDivs();
+    dayInput.value = formatLocalDate(new Date());
+    load();
+  </script>
+</main>
+</body>
+</html>

@@ -13,9 +13,10 @@ Every UPDATE_S it checks for a newer weather forecast (fetched hourly by
 The controller reads these tables (it doesn't import this package); without
 them it still runs, just without a PV forecast.
 
-`backfill` writes `day_forecast` for past days as they would have been
-forecast at 20:00 the evening before, when the controller makes its night
-plan; the winter replay (`dorfsteig-control replay --night`) uses them.
+`backfill` fills in the past from the archived weather forecasts:
+- `day_forecast` as it would have been at 20:00 the evening before, when the
+  controller makes its night plan (for `dorfsteig-control replay --night`);
+- `pv_forecast` for every hour, made 24 h ahead (for the Learning dashboard).
 The models are fitted on the same history, so backfilled forecasts look a
 little better than real ones would have been.
 """
@@ -124,8 +125,8 @@ def store_day(conn: sqlite3.Connection, issued: int, forecast: DayForecast, with
          forecast.surplus_kwh),
     )
     if with_hours:
-        conn.executemany("INSERT OR REPLACE INTO pv_forecast (issued, ts, pv_wh) VALUES (?, ?, ?)",
-                         [(issued, ts, wh) for ts, wh in forecast.hours.items()])
+        conn.executemany("INSERT OR REPLACE INTO pv_forecast (model, ts, issued, pv_wh) VALUES (?, ?, ?, ?)",
+                         [(pv.MODEL, ts, issued, wh) for ts, wh in forecast.hours.items()])
 
 
 def update(conn: sqlite3.Connection, now: datetime) -> bool:
@@ -161,7 +162,8 @@ def update(conn: sqlite3.Connection, now: datetime) -> bool:
 
 
 def backfill(conn: sqlite3.Connection, start: date, end: date) -> int:
-    """Day forecasts for past days, as known at PLAN_TIME the evening before. Returns days written."""
+    """Day forecasts for past days (as known at PLAN_TIME the evening before) and hourly
+    PV forecasts (made 24 h ahead). Returns days written."""
     refit(conn, datetime.now(TZ))
     pv_params, _ = load_model(conn, "pv")
     base_params, _ = load_model(conn, "base_load")
@@ -175,9 +177,26 @@ def backfill(conn: sqlite3.Connection, start: date, end: date) -> int:
         if forecast is not None:
             store_day(conn, int(as_of.timestamp()), forecast, with_hours=False)
             written += 1
+        backfill_hours(conn, day, pv_params)
         day += timedelta(days=1)
     conn.commit()
     return written
+
+
+def backfill_hours(conn: sqlite3.Connection, day: date, pv_params: dict) -> None:
+    """PV forecast for each hour of the local `day`, from the weather forecast known 24 h before it."""
+    hour = datetime.combine(day, clock(), TZ)
+    end = datetime.combine(day + timedelta(days=1), clock(), TZ)
+    rows = []
+    while hour < end:
+        ts = int(hour.timestamp())
+        issued = ts - 24 * 3600
+        weather = forecast_hours(conn, ts, ts + 3600, as_of=issued)
+        if ts in weather:
+            rows.append((pv.MODEL, ts, issued, pv.predict_wh(pv_params, ts, weather[ts].radiation or 0.0)))
+        hour += timedelta(hours=1)
+    conn.executemany("INSERT OR REPLACE INTO pv_forecast (model, ts, issued, pv_wh) VALUES (?, ?, ?, ?)",
+                     rows)
 
 
 def run() -> None:

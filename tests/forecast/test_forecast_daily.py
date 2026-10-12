@@ -46,3 +46,13 @@ def test_update_writes_once_per_weather_forecast(tmp_path: Path):
 def test_too_few_forecast_hours(tmp_path: Path):
     conn = setup(tmp_path)
     assert daily.forecast_day(conn, date(2026, 11, 6), NOW.timestamp(), PV, BASE) is None
+
+
+def test_backfill_hours_uses_the_forecast_made_24h_ahead(tmp_path: Path):
+    conn = init_db(tmp_path / "t.sqlite")
+    noon = int(datetime(2026, 11, 3, 12, tzinfo=TZ).timestamp())
+    conn.execute("INSERT INTO weather_forecast VALUES (?, ?, 'icon_ch2', 8, 100, 0)", (noon - 86400, noon))
+    conn.execute("INSERT INTO weather_forecast VALUES (?, ?, 'icon_ch2', 8, 999, 0)", (noon - 3600, noon))
+    daily.backfill_hours(conn, date(2026, 11, 3), PV)
+    assert conn.execute("SELECT model, ts, issued, pv_wh FROM pv_forecast").fetchall() == [
+        ("ratio", noon, noon - 86400, 1000.0)]

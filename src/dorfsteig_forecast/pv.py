@@ -27,6 +27,7 @@ is in the weather forecast itself, so the simple model is good enough.
 import sqlite3
 from datetime import UTC, datetime
 
+MODEL = "ratio"            # name in pv_forecast
 WINDOW_DAYS = 30
 WEEKS = 52
 DAY_AHEAD = (12 * 3600, 36 * 3600)   # forecasts issued this long before the hour count as "day-ahead"

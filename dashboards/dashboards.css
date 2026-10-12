@@ -1,0 +1,38 @@
+/* Dashboards: the heating UI's Pico stylesheet (pico.min.css links to it) plus these
+   rules, so both sites look alike. Page-specific layout stays in each page. */
+
+:root { --pico-font-size: 95%; }
+nav { margin-bottom: 1rem; }
+nav a[aria-current="page"] { font-weight: bold; text-decoration: underline; }
+h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+h2 { font-size: 1.1rem; margin-bottom: .5rem; }
+
+/* Date picker and previous/next buttons in one row */
+.controls { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.controls input, .controls select, .controls button { width: auto; margin: 0; padding: .3rem .7rem; height: auto; }
+.controls label { font-weight: bold; margin: 0; }
+#status, #refresh-note, .note { color: var(--pico-muted-color); font-size: .85rem; }
+
+/* Charts and tables sit on cards, like the tiles on the heating status page */
+#chart, #totals, .chart, .panel, .card {
+  background: var(--pico-card-background-color);
+  box-shadow: var(--pico-card-box-shadow);
+  border-radius: var(--pico-border-radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.card h2 { color: var(--pico-muted-color); text-transform: uppercase; letter-spacing: .05em; font-size: .9rem; }
+
+/* Energy & costs: two tables side by side, numbers right-aligned */
+.row { display: flex; gap: 1rem; flex-wrap: wrap; }
+.row .panel { flex: 1; min-width: 320px; }
+.panel td, .panel th { text-align: right; }
+.panel td:first-child, .panel th:first-child { text-align: left; }
+
+/* Status lights, same colours as the heating UI */
+.dot { display: inline-block; width: .9rem; height: .9rem; border-radius: 50%; margin-right: .5rem;
+       vertical-align: middle; box-shadow: 0 0 0 2px rgba(0, 0, 0, .08); }
+.green { background: #3a9d5d; }
+.yellow { background: #e5b700; }
+.red { background: #d9534f; }
+.grey { background: #aaa; }

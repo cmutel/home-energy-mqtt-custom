@@ -10,6 +10,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
 
+PV_MODEL = "ratio"   # the PV model the controller uses (pv_forecast.model)
+
 
 @dataclass(frozen=True)
 class DayForecast:
@@ -37,16 +39,17 @@ def day_forecast(conn: sqlite3.Connection, day: date, now: datetime) -> DayForec
 
 
 def pv_remaining_kwh(conn: sqlite3.Connection, now: datetime, until: datetime) -> float | None:
-    """Forecast PV from now until `until`, from the newest PV forecast (the current hour pro rata)."""
+    """Forecast PV from now until `until`, the newest forecast for each hour (the current hour pro rata)."""
     try:
-        issued = conn.execute("SELECT MAX(issued) FROM pv_forecast WHERE issued <= ?",
-                              (now.timestamp(),)).fetchone()[0]
-        if issued is None:
-            return None
         hour_start = int(now.timestamp()) // 3600 * 3600
-        rows = conn.execute("SELECT ts, pv_wh FROM pv_forecast WHERE issued = ? AND ts >= ? AND ts < ?",
-                            (issued, hour_start, until.timestamp())).fetchall()
+        rows = conn.execute(
+            "SELECT f.ts, f.pv_wh FROM pv_forecast f WHERE f.model = ? AND f.ts >= ? AND f.ts < ? "
+            "AND f.issued = (SELECT MAX(issued) FROM pv_forecast "
+            "                WHERE model = f.model AND ts = f.ts AND issued <= ?)",
+            (PV_MODEL, hour_start, until.timestamp(), now.timestamp())).fetchall()
     except sqlite3.OperationalError:
+        return None
+    if not rows:
         return None
     total = 0.0
     for ts, wh in rows:

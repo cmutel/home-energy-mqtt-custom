@@ -161,14 +161,17 @@ CREATE TABLE IF NOT EXISTS forecast_models (
 );
 """
 
-# PV forecast per hour, from the weather forecasts known at `issued`. Every
-# forecast is kept, like weather_forecast, so its skill can be checked.
+# PV forecast per hour and model, from the weather forecasts known at
+# `issued`. Every forecast is kept, like weather_forecast, so models can be
+# compared (the Learning dashboard). The key order suits "the newest forecast
+# of this model for this hour".
 PV_FORECAST = """
 CREATE TABLE IF NOT EXISTS pv_forecast (
-    issued     INTEGER NOT NULL,  -- the hour the forecast was made, Unix time
+    model      TEXT NOT NULL,     -- "ratio" (dorfsteig_forecast/pv.py)
     ts         INTEGER NOT NULL,  -- start of the hour forecast
+    issued     INTEGER NOT NULL,  -- when the forecast was made, Unix time
     pv_wh      REAL NOT NULL,
-    PRIMARY KEY (issued, ts)
+    PRIMARY KEY (model, ts, issued)
 );
 """
 
@@ -192,6 +195,14 @@ ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, 
               FORECAST_MODELS, PV_FORECAST, DAY_FORECAST, *DERIVED_TABLES.values()]
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Changes to existing tables. pv_forecast got a model column (2026-10-12); it only
+    holds a few hours of forecasts from before then, which the forecaster rewrites."""
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(pv_forecast)")]
+    if columns and "model" not in columns:
+        conn.execute("DROP TABLE pv_forecast")
+
+
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or settings.db_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +210,7 @@ def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     # mode (sqlite3.threadsafety == 3). The controller's web server needs this.
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
+    _migrate(conn)
     for ddl in ALL_TABLES:
         conn.executescript(ddl)
     conn.commit()
