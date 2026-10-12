@@ -4,6 +4,7 @@
 - heater_state:   current state per heater, so restarts keep timing guards
 - control_events: every switch, with the reason and grid power at the time
 - heater_power:   wattage measurements (see wattage.py)
+- water_tank:     when each water heater was last seen full (see water.py)
 """
 
 import sqlite3
@@ -35,6 +36,10 @@ CREATE TABLE IF NOT EXISTS control_events (
     dry_run    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS control_events_ts ON control_events (ts);
+CREATE TABLE IF NOT EXISTS water_tank (
+    heater     TEXT PRIMARY KEY,
+    last_full  REAL NOT NULL
+);
 """
 
 
@@ -75,6 +80,15 @@ class Store:
             "INSERT OR REPLACE INTO heater_state (heater, is_on, since, reason) VALUES (?, ?, ?, ?)",
             [(h, int(s.on), s.since, s.reason) for h, s in states.items()],
         )
+        self.conn.commit()
+
+    # ---- water tanks
+
+    def load_water_full(self) -> dict[str, float]:
+        return dict(self.conn.execute("SELECT heater, last_full FROM water_tank"))
+
+    def save_water_full(self, heater: str, ts: float) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO water_tank (heater, last_full) VALUES (?, ?)", (heater, ts))
         self.conn.commit()
 
     # ---- events

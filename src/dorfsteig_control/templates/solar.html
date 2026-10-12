@@ -1,7 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Solar{% endblock %}
 {% block content %}
-<h2>PV surplus switching</h2>
+<h2>Water heaters</h2>
+<p class="muted">PV mode: water heaters get PV surplus first (on above {{ (1498 + water.on_margin_w) | int }} W export,
+off above {{ water.off_import_w | int }} W import, at least {{ (water.min_on_s / 60) | int }} min on/off).
+A tank not seen full since the "full since" time heats until full at the backup time, and any tank not seen full
+for the safety time heats until full. Without grid data the tanks are on. Always-on rules are set aside in PV mode;
+boosts still work. Shadow mode only logs what PV mode would do (History, dry run).</p>
+<form method="post" action="{{ prefix }}/solar/water">
+  <div class="grid">
+    <label>Mode<select name="mode">
+      {% for value, label in [("always_on", "Always on (schedule rules)"), ("shadow", "Shadow: log what PV mode would do"), ("pv", "PV surplus with backup")] %}
+      <option value="{{ value }}" {% if water.mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+    <label>Backup at<input type="time" name="backup_at" value="{{ water.backup_at.strftime('%H:%M') }}"></label>
+    <label>if not full since<input type="time" name="full_since" value="{{ water.full_since.strftime('%H:%M') }}"></label>
+  </div>
+  <div class="grid">
+    <label>Safety, downstairs (h)<input type="number" name="safety_down_h" value="{{ water.safety_h.get('downstairs_water', 36) }}" min="6" step="1"></label>
+    <label>Safety, upstairs (h)<input type="number" name="safety_up_h" value="{{ water.safety_h.get('upstairs_water', 24) }}" min="6" step="1"></label>
+  </div>
+  <button {% if locked %}disabled{% endif %}>Save</button>
+</form>
+<p>Last seen full:
+{% for h in water.heaters %}{{ by_id[h].name }} {{ water_full.get(h) | ago }}{% if not loop.last %} · {% endif %}{% endfor %}
+<small class="muted">(relay on for {{ (water.full_after_s / 60) | int }} min without drawing; upstairs is estimated)</small></p>
+
+<h2>PV surplus switching (room heaters)</h2>
 <p class="muted">Each tick (20 s): above the export threshold the next heater in the priority list is switched on;
 below the import threshold the last one switched on by PV is switched off. Grid power is positive when exporting.</p>
 <form method="post" action="{{ prefix }}/solar">

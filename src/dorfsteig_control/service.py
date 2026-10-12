@@ -22,9 +22,9 @@ from pathlib import Path
 import aiomqtt
 import uvicorn
 
-from dorfsteig_control import wattage
+from dorfsteig_control import water, wattage
 from dorfsteig_control.config import ControlConfig, from_legacy
-from dorfsteig_control.engine import GridSample, decide
+from dorfsteig_control.engine import GridSample, States, decide
 from dorfsteig_control.heaters import BY_ID, HEATERS
 from dorfsteig_control.outputs import downstairs_payload, upstairs_payload
 from dorfsteig_control.report import daily_report, format_report
@@ -87,6 +87,11 @@ class Controller:
 
         self.sent_on: dict[str, str] = {}     # scheduled message kind → date sent
 
+        # Water heaters (water.py): when each tank was last seen full, and the
+        # relay states the PV logic would have in shadow mode
+        self.water_full = store.load_water_full()
+        self.shadow_states: States | None = None
+
     # ---- inputs
 
     def on_grid_power(self, power: float) -> None:
@@ -116,9 +121,12 @@ class Controller:
         except Exception:
             log.exception("Could not load config; using the previous one")
 
-        grid = GridSample(power=self.grid_power, age_s=now.timestamp() - self.grid_ts)
-        self.states, events = decide(self.states, self.config, now, grid,
-                                     overrides=self.overrides, hold_solar=self.hold_solar)
+        recent = self.history.window(now.timestamp() - 60, now.timestamp() + 1)
+        grid = GridSample(power=self.grid_power, age_s=now.timestamp() - self.grid_ts,
+                          average=sum(recent) / len(recent) if recent else None)
+        self.states, events = decide(self.states, self.config, now, grid, overrides=self.overrides,
+                                     hold_solar=self.hold_solar, water_full=self.water_full)
+        self.shadow_water(now, grid)
 
         for e in events:
             log.info("%s%s %s (%s, grid %s W)", "[dry run] " if self.dry_run else "",
@@ -135,6 +143,36 @@ class Controller:
         if self.compare_dir is not None:
             self.compare_with_legacy()
         self.last_tick = now.timestamp()
+
+    def shadow_water(self, now: datetime, grid: GridSample) -> None:
+        """In shadow mode, run the water PV logic on a copy of the states and log what it would do."""
+        water = self.config.water
+        if water.mode != "shadow":
+            self.shadow_states = None
+            return
+        if self.shadow_states is None:
+            self.shadow_states = dict(self.states)
+        states = {**self.states, **{h: self.shadow_states[h] for h in water.heaters}}
+        config = self.config.model_copy(update={"water": water.model_copy(update={"mode": "pv"})})
+        states, events = decide(states, config, now, grid, overrides=self.overrides,
+                                hold_solar=True, water_full=self.water_full)
+        self.shadow_states = states
+        events = [e for e in events if e.heater in water.heaters]
+        for e in events:
+            log.info("[water shadow] %s %s (%s)", "ON " if e.on else "OFF", BY_ID[e.heater].name, e.reason)
+        if events:
+            self.store.log_events(events, dry_run=True)
+
+    def update_water_full(self) -> None:
+        """Record tanks seen full: relay on for a while without drawing (from the real relays)."""
+        for heater in self.config.water.heaters:
+            state = self.states[heater]
+            if not state.on:
+                continue
+            seen = water.detect_full(self.store.conn, heater, state.since, self.config.water.full_after_s)
+            if seen is not None and seen > self.water_full.get(heater, 0):
+                self.water_full[heater] = seen
+                self.store.save_water_full(heater, seen)
 
     def compare_with_legacy(self) -> None:
         ours = {"upstairs": upstairs_payload(self.states), "downstairs": downstairs_payload(self.states)}
@@ -206,6 +244,10 @@ class Controller:
                 await self.notifier.send(f"Sensor {room} back", "Readings are arriving again.")
 
         await self.process_passive(ts)
+        try:
+            self.update_water_full()
+        except Exception:
+            log.exception("Water tank check failed")
 
         today = now.date().isoformat()
         for kind, at in (("summary", notify.daily_summary_at), ("midday", notify.midday_status_at),

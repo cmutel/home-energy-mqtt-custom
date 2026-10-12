@@ -95,6 +95,40 @@ class SolarParams(_Model):
         return v
 
 
+WaterMode = Literal["always_on", "shadow", "pv"]
+
+
+class WaterParams(_Model):
+    """Water heaters on PV surplus (see water.py).
+
+    always_on: schedule rules only (normally an always-on rule per tank).
+    shadow: as always_on, but the PV logic runs alongside and logs what it would do.
+    pv: PV surplus first, with a daily backup and a safety rule so a tank is
+        never short. Always-on rules for these tanks are set aside; other
+        rules (boosts, daily windows) still switch them on.
+    """
+
+    mode: WaterMode = "always_on"
+    heaters: list[str] = Field(default_factory=lambda: ["downstairs_water", "upstairs_water"])
+    backup_at: time = time(16, 0)        # heat until full if not full since full_since
+    full_since: time = time(10, 0)
+    safety_h: dict[str, float] = Field(  # heat until full if not seen full for this long
+        default_factory=lambda: {"downstairs_water": 36, "upstairs_water": 24})
+    on_margin_w: float = 100             # export beyond the heater's power needed to switch on
+    off_import_w: float = 200            # import tolerated before switching a tank off
+    min_on_s: float = 600
+    min_off_s: float = 600
+    settle_s: float = 60                 # wait after any switch for the boards and the meter
+    full_after_s: float = 600            # relay on without draw this long = tank full
+
+    @field_validator("heaters")
+    @classmethod
+    def _water_heaters(cls, v: list[str]) -> list[str]:
+        if any(h not in BY_ID or not BY_ID[h].water for h in v):
+            raise ValueError("Only water heaters can be listed")
+        return v
+
+
 class NotifySettings(_Model):
     """Pushover messages. Alerts (stale data, boards offline, wattage drift) are always sent."""
 
@@ -111,6 +145,7 @@ class NotifySettings(_Model):
 class ControlConfig(_Model):
     rules: list[Rule] = Field(default_factory=list)
     solar: SolarParams = Field(default_factory=SolarParams)
+    water: WaterParams = Field(default_factory=WaterParams)
     notify: NotifySettings = Field(default_factory=NotifySettings)
 
 

@@ -107,3 +107,16 @@ def test_test_all_skips_water_heaters(setup, monkeypatch):
     assert len(started) == 10 and not any("water" in h for h in started)
     client.post("/heating/wattage/test", data={"heater": "upstairs_water"})
     assert started[-1] == "upstairs_water"   # still testable on its own
+
+
+def test_water_settings(setup):
+    controller, client = setup
+    form = {"mode": "shadow", "backup_at": "15:00", "full_since": "09:00",
+            "safety_down_h": "30", "safety_up_h": "20"}
+    r = client.post("/heating/solar/water", data=form)
+    assert r.status_code == 303
+    w = controller.config.water
+    assert w.mode == "shadow" and w.backup_at.hour == 15 and w.safety_h["upstairs_water"] == 20
+    assert "Last seen full" in client.get("/heating/solar").text
+    r = client.post("/heating/solar/water", data=form | {"mode": "nonsense"})
+    assert "error=" in r.headers["location"] and controller.config.water.mode == "shadow"

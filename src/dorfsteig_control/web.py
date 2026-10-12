@@ -205,7 +205,20 @@ def create_app(controller: Controller) -> FastAPI:
 
     @app.get(f"{PREFIX}/solar", response_class=HTMLResponse)
     async def solar(request: Request) -> HTMLResponse:
-        return page(request, "solar.html", solar=controller.config.solar)
+        return page(request, "solar.html", solar=controller.config.solar, water=controller.config.water,
+                    water_full=controller.water_full)
+
+    @app.post(f"{PREFIX}/solar/water")
+    async def water_save(
+        mode: str = Form(), backup_at: str = Form(), full_since: str = Form(),
+        safety_down_h: float = Form(), safety_up_h: float = Form(),
+    ) -> RedirectResponse:
+        def change(c: ControlConfig) -> None:
+            c.water.mode = mode
+            c.water.backup_at = backup_at
+            c.water.full_since = full_since
+            c.water.safety_h = {"downstairs_water": safety_down_h, "upstairs_water": safety_up_h}
+        return edit("/solar", change, "Water heater settings saved")
 
     @app.post(f"{PREFIX}/solar")
     async def solar_save(
