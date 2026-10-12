@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS air_quality (
 
 # Derived by dorfsteig_ingest.energy from the tables above; can be rebuilt.
 # Upstairs = whole house (MBMD: PV - grid) - downstairs panel (IoTaWatt mains).
-# The upstairs water heater isn't measured; it's estimated from ±1498 W steps.
+# Zone C and the clothes washer have IoTaWatt channels but aren't on the
+# downstairs mains, so they're part of upstairs. The upstairs water heater
+# isn't measured; it's estimated from ±1498 W steps.
 HOUSE_MINUTES = """
 CREATE TABLE IF NOT EXISTS house_minutes (
     ts             INTEGER NOT NULL PRIMARY KEY,
@@ -83,7 +85,8 @@ CREATE TABLE IF NOT EXISTS house_minutes (
     house          REAL,   -- W, whole house consumption
     downstairs     REAL,   -- W, IoTaWatt mains A + B
     upstairs       REAL,   -- W, house - downstairs
-    upstairs_water REAL    -- W, estimated: 1498 or 0
+    upstairs_water REAL,   -- W, estimated: 1498 or 0
+    upstairs_other REAL    -- W, upstairs - water heater - zone C - clothes washer
 );
 """
 
@@ -102,6 +105,7 @@ CREATE TABLE IF NOT EXISTS energy_hourly (
     downstairs_water_wh REAL,   -- measured by IoTaWatt
     upstairs_wh         REAL,   -- house - downstairs
     upstairs_water_wh   REAL,   -- estimated
+    upstairs_other_wh   REAL,   -- upstairs - water heater - zone C - clothes washer
     high_tariff         INTEGER NOT NULL,
     import_price        REAL,   -- CHF/kWh; NULL if there are no prices for the year
     export_price        REAL,
@@ -112,7 +116,9 @@ CREATE TABLE IF NOT EXISTS energy_hourly (
 );
 """
 
-ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, HOUSE_MINUTES, ENERGY_HOURLY]
+DERIVED_TABLES = {"house_minutes": HOUSE_MINUTES, "energy_hourly": ENERGY_HOURLY}
+
+ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, *DERIVED_TABLES.values()]
 
 
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:

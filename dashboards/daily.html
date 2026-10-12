@@ -63,21 +63,23 @@
     };
 
     // The upstairs panel isn't measured: upstairs = whole house (MBMD) - downstairs mains
-    // (IoTaWatt), and its water heater is estimated from switching steps (see energy.py).
+    // (IoTaWatt). Zone C and the washer are on it; its water heater is estimated from
+    // switching steps, and "other" is the rest (see energy.py).
     const SQL = {
       upstairs_water: 'h.upstairs_water',
-      upstairs_other: 'h.upstairs - h.upstairs_water',
+      upstairs_other: 'h.upstairs_other',
     };
 
     const LABELS = {
       zone_a: 'Kitchen / bathroom / dining room',
       zone_b: 'Hallway / living room / entrance / outside',
-      zone_c: 'Upstairs bathroom / parents / playroom south',
+      zone_c: 'Zone C: upstairs bathroom / parents / playroom south (upstairs panel)',
+      clothes_washer: 'Clothes washer (upstairs panel)',
       zone_d: 'Upstairs hallway',
       zone_e: 'Kids bedroom / playroom north / balcony',
       water_heater: 'Downstairs water heater',
       upstairs_water: 'Upstairs water heater (estimated)',
-      upstairs_other: 'Upstairs other (heating, lights, office, bedrooms)',
+      upstairs_other: 'Upstairs other (heating, lights, office, bedrooms; not zone C or washer)',
     };
 
     const CHANNELS = Object.entries(GROUPS).flatMap(([group, names]) =>

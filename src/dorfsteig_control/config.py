@@ -100,6 +100,7 @@ class NotifySettings(_Model):
 
     daily_summary_at: time | None = time(21, 0)
     midday_status_at: time | None = None
+    morning_report_at: time | None = time(6, 0)   # yesterday's energy and costs per circuit
     board_offline_after_s: float = 300
     alert_repeat_s: float = 4 * 3600   # don't repeat the same alert more often than this
 

@@ -6,6 +6,10 @@ The house has two breaker panels. IoTaWatt measures the downstairs one
     house      = PV - grid          (grid is positive when exporting)
     upstairs   = house - downstairs
 
+Zone C and the clothes washer have IoTaWatt channels but aren't behind the
+downstairs mains CTs (when they run, mains doesn't change), so they belong
+to upstairs. "Upstairs other" is what's left after them and the water heater.
+
 The upstairs water heater (1498 W, same model as the downstairs one) isn't
 measured. It switches by its own thermostat, so it's found from steps of
 about ±1498 W in the upstairs signal: on after a step up, off after a step
@@ -24,12 +28,14 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-from dorfsteig_core.db import init_db
+from dorfsteig_core.db import DERIVED_TABLES, init_db
 from dorfsteig_core.tariff import TZ, is_high_tariff, prices_for
 
 log = logging.getLogger(__name__)
 
 UPSTAIRS_WATER_W = 1498.0
+UPSTAIRS_CHANNELS = ("zone_c", "clothes_washer")   # IoTaWatt channels on the upstairs panel
+MEASURED_UP = " + ".join(f"IFNULL({c}, 0)" for c in UPSTAIRS_CHANNELS)
 STEP_TOL_W = 200.0
 MIN_RUN = 6          # minutes
 MAX_RUN = 240        # minutes
@@ -116,6 +122,7 @@ def compute_minutes(conn: sqlite3.Connection, start: int, end: int) -> int:
     grid: list[float | None] = [None] * n
     pv: list[float | None] = [None] * n
     down: list[float | None] = [None] * n
+    measured_up: list[float] = [0.0] * n
     for ts, p in conn.execute("SELECT ts, power FROM grid_readings WHERE ts >= ? AND ts < ?", (first, end)):
         if ts in index:
             grid[index[ts]] = p
@@ -123,24 +130,28 @@ def compute_minutes(conn: sqlite3.Connection, start: int, end: int) -> int:
                               (first, end)):
         if ts in index:
             pv[index[ts]] = p
-    iotawatt = "SELECT ts, mains_a, mains_b FROM iotawatt_readings WHERE ts >= ? AND ts < ?"
-    for ts, a, b in conn.execute(iotawatt, (first, end)):
+    iotawatt = f"SELECT ts, mains_a, mains_b, {MEASURED_UP} FROM iotawatt_readings WHERE ts >= ? AND ts < ?"
+    for ts, a, b, up in conn.execute(iotawatt, (first, end)):
         if ts in index and a is not None and b is not None:
             down[index[ts]] = a + b
+            measured_up[index[ts]] = up
 
     pv = fill_pv(pv, [g is not None for g in grid])
     house = [None if g is None or p is None else p - g for g, p in zip(grid, pv)]
     upstairs = [None if h is None or d is None else h - d for h, d in zip(house, down)]
-    water = detect_water_heater(upstairs)
+    # Look for water heater steps in what isn't measured, so the washer's don't count
+    unmeasured = [None if u is None else u - m for u, m in zip(upstairs, measured_up)]
+    water = [UPSTAIRS_WATER_W * on for on in detect_water_heater(unmeasured)]
 
     rows = [
         (ts, pv[i], house[i], down[i], upstairs[i],
-         None if upstairs[i] is None else UPSTAIRS_WATER_W * water[i])
+         None if upstairs[i] is None else water[i],
+         None if unmeasured[i] is None else unmeasured[i] - water[i])
         for i, ts in enumerate(stamps)
         if ts >= start and (house[i] is not None or down[i] is not None)
     ]
     conn.execute("DELETE FROM house_minutes WHERE ts >= ? AND ts < ?", (start, end))
-    conn.executemany("INSERT INTO house_minutes VALUES (?, ?, ?, ?, ?, ?)", rows)
+    conn.executemany("INSERT INTO house_minutes VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
     conn.commit()
     return len(rows)
 
@@ -174,9 +185,9 @@ def compute_hours(conn: sqlite3.Connection, start: int, end: int) -> int:
         # Counter readings close to both hour boundaries, so the difference covers this hour only
         prev = conn.execute(COUNTERS, (hour - COUNTER_SLACK, hour)).fetchone()
         last = conn.execute(COUNTERS, (nxt - COUNTER_SLACK, nxt)).fetchone()
-        minutes = conn.execute("SELECT pv, upstairs, upstairs_water FROM house_minutes "
+        minutes = conn.execute("SELECT pv, upstairs, upstairs_water, upstairs_other FROM house_minutes "
                                "WHERE ts >= ? AND ts < ?", (hour, nxt)).fetchall()
-        iota = conn.execute("SELECT mains_a + mains_b, water_heater FROM iotawatt_readings "
+        iota = conn.execute(f"SELECT mains_a + mains_b, water_heater, {MEASURED_UP} FROM iotawatt_readings "
                             "WHERE ts >= ? AND ts < ? AND mains_a IS NOT NULL", (hour, nxt)).fetchall()
         if not grid and not iota:
             continue
@@ -190,15 +201,20 @@ def compute_hours(conn: sqlite3.Connection, start: int, end: int) -> int:
             export_wh = _mean_wh([max(p, 0) for p in powers])
 
         # Energy balance with the exact import/export counters
-        pv_wh = _mean_wh([pv for pv, _, _ in minutes if pv is not None])
+        pv_wh = _mean_wh([pv for pv, _, _, _ in minutes if pv is not None])
         house_wh = None
         if pv_wh is not None and import_wh is not None and export_wh is not None:
             house_wh = pv_wh + import_wh - export_wh
 
-        downstairs_wh = _mean_wh([d for d, _ in iota])
-        downstairs_water_wh = _mean_wh([w or 0 for _, w in iota])
-        upstairs_wh = None if house_wh is None or downstairs_wh is None else house_wh - downstairs_wh
-        upstairs_water_wh = _mean_wh([w for _, u, w in minutes if u is not None])
+        downstairs_wh = _mean_wh([d for d, _, _ in iota])
+        downstairs_water_wh = _mean_wh([w or 0 for _, w, _ in iota])
+        measured_up_wh = _mean_wh([m for _, _, m in iota])
+        upstairs_wh = upstairs_water_wh = upstairs_other_wh = None
+        if house_wh is not None and downstairs_wh is not None:
+            upstairs_wh = house_wh - downstairs_wh
+            upstairs_water_wh = _mean_wh([w for _, u, w, _ in minutes if u is not None])
+            if upstairs_water_wh is not None and measured_up_wh is not None:
+                upstairs_other_wh = upstairs_wh - upstairs_water_wh - measured_up_wh
 
         local = datetime.fromtimestamp(hour, timezone.utc).astimezone(TZ)
         high = is_high_tariff(local)
@@ -210,12 +226,12 @@ def compute_hours(conn: sqlite3.Connection, start: int, end: int) -> int:
             export_chf = None if export_wh is None else export_wh / 1000 * export_price
 
         rows.append((hour, pv_wh, import_wh, export_wh, house_wh, downstairs_wh, downstairs_water_wh,
-                     upstairs_wh, upstairs_water_wh, int(high), import_price, export_price,
+                     upstairs_wh, upstairs_water_wh, upstairs_other_wh, int(high), import_price, export_price,
                      import_chf, export_chf,
                      len(powers), len(iota)))
 
     conn.execute("DELETE FROM energy_hourly WHERE ts >= ? AND ts < ?", (start, end))
-    conn.executemany(f"INSERT INTO energy_hourly VALUES ({', '.join('?' * 16)})", rows)
+    conn.executemany(f"INSERT INTO energy_hourly VALUES ({', '.join('?' * 17)})", rows)
     conn.commit()
     return len(rows)
 
@@ -233,6 +249,11 @@ def update(conn: sqlite3.Connection, now: float | None = None) -> None:
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
+    """Drop and recompute the derived tables, picking up schema changes."""
+    for name, ddl in DERIVED_TABLES.items():
+        conn.execute(f"DROP TABLE IF EXISTS {name}")
+        conn.execute(ddl)
+    conn.commit()
     first = conn.execute(
         "SELECT MIN(ts) FROM (SELECT MIN(ts) ts FROM grid_readings UNION ALL "
         "SELECT MIN(ts) FROM iotawatt_readings WHERE mains_a IS NOT NULL)"

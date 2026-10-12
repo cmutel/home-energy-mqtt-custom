@@ -15,7 +15,7 @@ import json
 import logging
 import time
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiomqtt
@@ -26,6 +26,7 @@ from dorfsteig_control.config import ControlConfig, from_legacy
 from dorfsteig_control.engine import GridSample, decide
 from dorfsteig_control.heaters import BY_ID, HEATERS
 from dorfsteig_control.outputs import downstairs_payload, upstairs_payload
+from dorfsteig_control.report import daily_report, format_report
 from dorfsteig_control.store import Store
 from dorfsteig_control.summary import day_summary, format_status, format_summary
 from dorfsteig_core.notify import Notifier
@@ -196,7 +197,8 @@ class Controller:
         await self.process_passive(ts)
 
         today = now.date().isoformat()
-        for kind, at in (("summary", notify.daily_summary_at), ("midday", notify.midday_status_at)):
+        for kind, at in (("summary", notify.daily_summary_at), ("midday", notify.midday_status_at),
+                         ("morning", notify.morning_report_at)):
             if at is None or now.time() < at or self.sent_on.get(kind) == today:
                 continue
             self.sent_on[kind] = today
@@ -206,6 +208,11 @@ class Controller:
 
     async def send_scheduled(self, kind: str, now: datetime | None = None) -> None:
         now = now or datetime.now()
+        if kind == "morning":
+            yesterday = now.date() - timedelta(days=1)
+            report = daily_report(self.store.conn, yesterday)
+            await self.notifier.send(f"Energy {yesterday:%a %d %b}", format_report(report))
+            return
         summary = day_summary(self.store.conn, now, dry_run=self.dry_run)
         if kind == "summary":
             await self.notifier.send(f"Summary {now:%a %d %b}", format_summary(summary))
