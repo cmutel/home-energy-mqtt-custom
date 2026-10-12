@@ -1,6 +1,7 @@
 """The running controller: one asyncio process with four tasks.
 
-- MQTT: record grid power (and PV power for the status page)
+- MQTT: record grid power (and PV power for the status page), and keep the
+  newest value of every MBMD topic for the real-time page (live.py)
 - control loop: every `tick_s`, run `engine.decide` and persist the result
 - monitor: alerts, scheduled Pushover messages, passive wattage estimates
 - web: ESP32 JSON files, legacy status.json, /api/status and the UI (web.py)
@@ -36,6 +37,7 @@ from dorfsteig_core.settings import settings
 
 log = logging.getLogger(__name__)
 
+MBMD_TOPICS = "mbmd/#"
 GRID_POWER_TOPIC = "mbmd/solaredge1-1-1/Power"
 PV_POWER_TOPIC = "mbmd/solaredge1-1/Power"
 TICK_S = 20            # legacy controller acted on every 11th ~2 s reading
@@ -74,6 +76,7 @@ class Controller:
         self.grid_ts = self.started         # treat startup as the last "reading" for staleness
         self.pv_power: float | None = None
         self.pv_ts: float | None = None
+        self.mbmd: dict[str, tuple[float | str, float]] = {}   # topic → (newest value, when)
         self.history = wattage.GridHistory()
         self.last_tick = 0.0
         self.board_polls: dict[str, dict] = {}
@@ -429,17 +432,23 @@ async def mqtt_loop(controller: Controller) -> None:
     while True:
         try:
             async with aiomqtt.Client(settings.mqtt_host, settings.mqtt_port) as client:
-                await client.subscribe(GRID_POWER_TOPIC)
-                await client.subscribe(PV_POWER_TOPIC)
-                log.info("Subscribed to MBMD power topics on %s:%s", settings.mqtt_host, settings.mqtt_port)
+                await client.subscribe(MBMD_TOPICS)
+                log.info("Subscribed to MBMD topics on %s:%s", settings.mqtt_host, settings.mqtt_port)
                 delay = 5
                 async for message in client.messages:
+                    topic = str(message.topic)
+                    payload = message.payload
+                    text = payload.decode() if isinstance(payload, bytes) else str(payload)
                     try:
-                        value = float(message.payload)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
-                        log.warning("Bad payload on %s: %r", message.topic, message.payload)
+                        value: float | str = float(text)
+                    except ValueError:
+                        value = text            # e.g. mbmd/status "connected"
+                    controller.mbmd[topic] = (value, time.time())
+                    if topic not in (GRID_POWER_TOPIC, PV_POWER_TOPIC):
                         continue
-                    if message.topic.matches(GRID_POWER_TOPIC):
+                    if isinstance(value, str):
+                        log.warning("Bad payload on %s: %r", topic, text)
+                    elif topic == GRID_POWER_TOPIC:
                         controller.on_grid_power(value)
                     else:
                         controller.pv_power = value

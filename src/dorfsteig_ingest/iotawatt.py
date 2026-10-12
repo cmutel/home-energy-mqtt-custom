@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from dorfsteig_core.db import init_db
+from dorfsteig_core.iotawatt import COLUMNS, SELECT  # shared with the controller's live view
 from dorfsteig_core.settings import settings
 
 log = logging.getLogger(__name__)
@@ -34,32 +35,6 @@ RETRY_BACKOFF = 10    # seconds; multiplied by attempt number
 
 # First day with IoTaWatt data
 DEFAULT_START = datetime(2023, 8, 10, tzinfo=timezone.utc)
-
-SELECT = (
-    "[time.utc.unix"
-    ",Input_0.volts"
-    ",Mains_A.watts"
-    ",Mains_B.watts"
-    ",Oven.watts"
-    ",Zone_A.watts"
-    ",Zone_B.watts"
-    ",Zone_C.watts"
-    ",Zone_D.watts"
-    ",Zone_E.watts"
-    ",Zone_F.watts"
-    ",Clothes_Washer.watts"
-    ",Clothes_Dryer.watts"
-    ",Water_Heater.watts"
-    ",Dishwasher.watts"
-    ",Stovetop.watts"
-    "]"
-)
-
-COLUMNS = [
-    "input_0", "mains_a", "mains_b", "oven",
-    "zone_a", "zone_b", "zone_c", "zone_d", "zone_e", "zone_f",
-    "clothes_washer", "clothes_dryer", "water_heater", "dishwasher", "stovetop",
-]
 
 INSERT_SQL = """
     INSERT OR REPLACE INTO iotawatt_readings (

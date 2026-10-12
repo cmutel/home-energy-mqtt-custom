@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="pico.min.css">
   <link rel="stylesheet" href="dashboards.css">
+  <script src="channels.js"></script>
 </head>
 <body>
 <main class="container">
@@ -19,6 +20,7 @@
       <li><a href="energy.html">Energy &amp; costs</a></li>
       <li><a href="climate.html">Air quality</a></li>
       <li><a href="learning.html">Learning</a></li>
+      <li><a href="realtime.html">Real time</a></li>
       <li><a href="status.html">Status</a></li>
     </ul>
   </nav>
@@ -36,14 +38,11 @@
   <script>
     const API = '/datasette';
 
-    // Channels grouped for legend organisation.
-    // Click a group title to toggle the whole group; click individual items to toggle one line.
-    const GROUPS = {
-      'Mains':      ['mains_a', 'mains_b'],
-      'Heating':    ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'],
-      'Appliances': ['oven', 'stovetop', 'clothes_washer', 'clothes_dryer', 'water_heater', 'dishwasher'],
-      'Upstairs':   ['upstairs_water', 'upstairs_other'],
-    };
+    // Lines drawn, by legend group (names in channels.js). Click a group title in the
+    // legend to show or hide the whole group, or a single entry to toggle one line.
+    const CHANNELS = CIRCUIT_GROUPS
+      .filter(group => group.title !== 'Supply')
+      .flatMap(group => Object.keys(group.circuits).map(name => ({ name, group: group.title })));
 
     // The upstairs panel isn't measured: upstairs = whole house (MBMD) - downstairs panel
     // (IoTaWatt), and its water heater is estimated from switching steps (see energy.py).
@@ -51,21 +50,6 @@
       upstairs_water: 'h.upstairs_water',
       upstairs_other: 'h.upstairs_other',
     };
-
-    const LABELS = {
-      zone_a: 'Kitchen / bathroom / dining room',
-      zone_b: 'Hallway / living room / entrance / outside',
-      zone_c: 'Upstairs bathroom / parents / playroom south',
-      zone_d: 'Upstairs hallway',
-      zone_e: 'Kids bedroom / playroom north / balcony',
-      water_heater: 'Downstairs water heater',
-      upstairs_water: 'Upstairs water heater (estimated)',
-      upstairs_other: 'Upstairs other (heating, lights, office, bedrooms)',
-    };
-
-    const CHANNELS = Object.entries(GROUPS).flatMap(([group, names]) =>
-      names.map(name => ({ name, group }))
-    );
 
     const dayInput = document.getElementById('day');
     const status   = document.getElementById('status');
@@ -103,10 +87,12 @@
 
       const HIDDEN_BY_DEFAULT = new Set(['mains_a', 'mains_b']);
 
-      const traces = CHANNELS.map(({ name }) => ({
+      const traces = CHANNELS.map(({ name, group }) => ({
         x: times,
         y: rows.map(r => r[name]),
-        name: LABELS[name] ?? name.replace(/_/g, '\u00a0'),
+        name: circuitLabel(name),
+        legendgroup: group,
+        legendgrouptitle: { text: group },
         type: 'scatter',
         mode: 'lines',
         line: { width: 1.5 },
@@ -117,7 +103,7 @@
       Plotly.react('chart', traces, {
         xaxis: { type: 'date', title: 'Time' },
         yaxis: { title: 'Power (W)', rangemode: 'tozero' },
-        legend: {},
+        legend: { groupclick: 'toggleitem' },
         hovermode: 'x unified',
         margin: { t: 20, r: 20, b: 60, l: 70 },
         height: 580,
@@ -129,15 +115,9 @@
 
     // Sum watts over all one-minute readings → Wh (÷60), display as kWh
     const TOTALS = [
-      { label: 'Heating',       fields: ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'] },
-      { label: 'Water heater downstairs', fields: ['water_heater'] },
-      { label: 'Water heater upstairs (est.)', fields: ['upstairs_water'] },
-      { label: 'Upstairs other', fields: ['upstairs_other'] },
-      { label: 'Clothes dryer', fields: ['clothes_dryer'] },
-      { label: 'Oven',          fields: ['oven'] },
-      { label: 'Clothes washer',fields: ['clothes_washer'] },
-      { label: 'Dishwasher',    fields: ['dishwasher'] },
-      { label: 'Stovetop',      fields: ['stovetop'] },
+      { label: 'Zones A–F', fields: ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'] },
+      ...['water_heater', 'upstairs_water', 'upstairs_other', 'clothes_dryer', 'oven', 'clothes_washer',
+          'dishwasher', 'stovetop'].map(name => ({ label: circuitLabel(name), fields: [name] })),
     ];
 
     function renderTotals(rows) {
@@ -157,7 +137,7 @@
         marker: { color: '#4c78a8' },
       }], {
         xaxis: { title: 'kWh', rangemode: 'tozero' },
-        margin: { t: 20, r: 100, b: 50, l: 190 },
+        margin: { t: 20, r: 100, b: 50, l: 250 },
         height: 340,
       });
     }

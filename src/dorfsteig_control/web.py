@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from dorfsteig_control import forecasts, wattage
 from dorfsteig_control.config import AlwaysOn, ControlConfig, DailyWindow, OneOff
 from dorfsteig_control.heaters import BY_ID, HEATERS
+from dorfsteig_control.live import LiveView
 from dorfsteig_control.night import night_of
 from dorfsteig_control.outputs import downstairs_payload, legacy_status, upstairs_payload
 from dorfsteig_control.schedule import rule_active
@@ -123,6 +124,13 @@ def create_app(controller: Controller) -> FastAPI:
     @app.get(f"{PREFIX}/api/status")
     async def api_status() -> dict:
         return controller.status()
+
+    live = LiveView()
+
+    @app.get(f"{PREFIX}/api/live")
+    async def api_live() -> dict:
+        """Power per circuit right now, for dashboards/realtime.html (see live.py)."""
+        return await live.snapshot(controller)
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

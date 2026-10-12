@@ -31,13 +31,12 @@ import time
 from datetime import datetime, timezone
 
 from dorfsteig_core.db import DERIVED_TABLES, init_db
+from dorfsteig_core.iotawatt import OFF_MAINS_CHANNELS
 from dorfsteig_core.tariff import TZ, is_high_tariff, prices_for
 
 log = logging.getLogger(__name__)
 
 UPSTAIRS_WATER_W = 1498.0
-# Downstairs channels on the phase without a mains CT
-OFF_MAINS_CHANNELS = ("zone_c", "clothes_washer")
 DOWNSTAIRS = "mains_a + mains_b + " + " + ".join(f"IFNULL({c}, 0)" for c in OFF_MAINS_CHANNELS)
 STEP_TOL_W = 200.0
 MIN_RUN = 6          # minutes

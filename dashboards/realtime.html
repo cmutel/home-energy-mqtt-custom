@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <title>Real time — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="pico.min.css">
+  <link rel="stylesheet" href="dashboards.css">
+  <script src="channels.js"></script>
+  <style>
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+    .tiles .panel { margin: 0; }
+    .tiles .value { font-size: 1.5rem; font-weight: bold; }
+    .tiles .label { color: var(--pico-muted-color); font-size: .85rem; }
+    .panel td, .panel th { padding: .25rem .5rem; }
+    .group td { font-weight: bold; color: var(--pico-muted-color); padding-top: .75rem; }
+    .on { color: var(--pico-ins-color); font-weight: bold; }
+  </style>
+</head>
+<body>
+<main class="container">
+  <nav>
+    <ul><li><strong>Dorfsteig dashboards</strong></li></ul>
+    <ul>
+      <li><a href="/heating/">Heating</a></li>
+      <li><a href="daily.html">Daily consumption</a></li>
+      <li><a href="power.html">Solar &amp; grid</a></li>
+      <li><a href="energy.html">Energy &amp; costs</a></li>
+      <li><a href="climate.html">Air quality</a></li>
+      <li><a href="learning.html">Learning</a></li>
+      <li><a href="realtime.html" aria-current="page">Real time</a></li>
+      <li><a href="status.html">Status</a></li>
+    </ul>
+  </nav>
+  <h1>Real time</h1>
+  <div class="controls">
+    <button id="pause" class="outline">Pause</button>
+    <span id="status"></span>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+  <div class="panel"><h2>Last <span id="minutes"></span> minutes (W)</h2><div id="chart"></div></div>
+  <div class="row">
+    <div class="panel"><h2>Per phase (grid meter)</h2><table id="phases"></table></div>
+    <div class="panel"><h2>Heater relays</h2><table id="heaters"></table></div>
+  </div>
+  <div class="panel"><h2>IoTaWatt (downstairs panel)</h2><table id="iotawatt"></table></div>
+  <div id="mbmd"></div>
+  <p class="note">
+    Updated every 5 seconds while this page is open (the IoTaWatt averages over 5 s; the stored history stays
+    at one-minute values). House = PV − grid; downstairs = mains A + B + zone C + washer (the third phase has no
+    mains CT); upstairs = house − downstairs, so anything downstairs on the third phase without its own CT shows
+    up as upstairs. Per phase, the inverter's power is split by its current on each phase. MBMD and the IoTaWatt
+    are a few seconds apart: compare steady loads, not the moment something switches.
+  </p>
+
+  <script>
+    const LIVE = '/heating/api/live';
+    const REFRESH_S = 5;
+    const HISTORY_MINUTES = 15;
+
+    // Lines in the rolling chart: name → how to read it from a snapshot
+    const CHART_LINES = {
+      'House': s => s.totals.house,
+      'Downstairs': s => s.totals.downstairs,
+      'Upstairs': s => s.totals.upstairs,
+      'House L1': s => s.phases.L1.house,
+      'House L2': s => s.phases.L2.house,
+      'House L3': s => s.phases.L3.house,
+      'Mains A': s => watts(s, 'Mains_A'),
+      'Mains B': s => watts(s, 'Mains_B'),
+    };
+    const HIDDEN_BY_DEFAULT = new Set(['House L1', 'House L2', 'House L3', 'Mains A', 'Mains B']);
+
+    const history = [];      // [time, snapshot] for the rolling chart
+    let paused = false;
+
+    // ---- Formatting
+
+    function watts(snapshot, series) {
+      const values = snapshot.iotawatt.series[series];
+      return values ? values.watts : null;
+    }
+
+    function format(value, digits = 0) {
+      if (value === null || value === undefined) return '–';
+      if (typeof value !== 'number') return value;
+      return value.toFixed(digits);
+    }
+
+    function power(value) {
+      if (value === null || value === undefined) return '–';
+      return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(2)} kW` : `${value.toFixed(0)} W`;
+    }
+
+    function age(seconds) {
+      return seconds === null || seconds === undefined ? 'no data' : `${seconds.toFixed(0)} s old`;
+    }
+
+    // ---- Sections
+
+    function drawTiles(s) {
+      const t = s.totals;
+      const tiles = [
+        ['Grid', t.grid === null ? '–' : `${t.grid >= 0 ? '↑' : '↓'} ${power(Math.abs(t.grid))}`,
+         t.grid === null ? '' : (t.grid >= 0 ? 'exporting' : 'importing')],
+        ['PV', power(t.pv), ''],
+        ['House', power(t.house), 'PV − grid'],
+        ['Downstairs', power(t.downstairs), 'IoTaWatt'],
+        ['Upstairs', power(t.upstairs), 'house − downstairs'],
+      ];
+      document.getElementById('tiles').innerHTML = tiles.map(([label, value, note]) =>
+        `<div class="panel"><div class="label">${label}</div><div class="value">${value}</div>
+         <div class="label">${note}</div></div>`).join('');
+    }
+
+    function drawPhases(s) {
+      const grid = (s.mbmd['solaredge1-1-1'] || { values: {} }).values;
+      const quantity = (name, phase) => (grid[name] || {})[phase];
+      const rows = ['L1', 'L2', 'L3'].map(phase => {
+        const p = s.phases[phase];
+        return `<tr><td>${phase}</td><td>${power(p.grid)}</td><td>${power(p.pv)}</td><td>${power(p.house)}</td>
+                <td>${format(quantity('Current', phase), 1)} A</td><td>${format(quantity('Voltage', phase), 1)} V</td>
+                <td>${format(quantity('Cosphi', phase), 2)}</td></tr>`;
+      });
+      document.getElementById('phases').innerHTML =
+        '<thead><tr><th>Phase</th><th>Grid</th><th>PV</th><th>House</th><th>Current</th><th>Voltage</th>' +
+        '<th>cos φ</th></tr></thead><tbody>' + rows.join('') + '</tbody>';
+    }
+
+    function drawHeaters(s) {
+      document.getElementById('heaters').innerHTML = '<tbody>' + s.heaters.map(h =>
+        `<tr><td>${h.name}</td><td class="${h.on ? 'on' : ''}">${h.on ? 'on' : 'off'}</td>
+         <td>${h.reason || ''}</td></tr>`).join('') + '</tbody>';
+    }
+
+    function drawIotawatt(s) {
+      const io = s.iotawatt;
+      const series = Object.keys(io.series);
+      // Known circuits in the order of channels.js, then anything else the IoTaWatt has
+      const rows = [];
+      const shown = new Set();
+      for (const group of CIRCUIT_GROUPS) {
+        const names = series.filter(name => name.toLowerCase() in group.circuits);
+        if (!names.length) continue;
+        rows.push(`<tr class="group"><td colspan="7">${group.title}</td></tr>`);
+        for (const name of names) { rows.push(iotawattRow(name, io)); shown.add(name); }
+      }
+      const others = series.filter(name => !shown.has(name));
+      if (others.length) {
+        rows.push('<tr class="group"><td colspan="7">Other</td></tr>');
+        for (const name of others) rows.push(iotawattRow(name, io));
+      }
+      document.getElementById('iotawatt').innerHTML =
+        '<thead><tr><th>Circuit</th><th>Series</th><th>Power</th><th>Current</th><th>Apparent</th>' +
+        '<th>Reactive</th><th>Power factor</th></tr></thead><tbody>' +
+        (rows.join('') || `<tr><td colspan="7">${io.error || 'No data'}</td></tr>`) + '</tbody>';
+    }
+
+    function iotawattRow(name, io) {
+      const v = io.series[name];
+      if (io.units[name] === 'Volts') {
+        return `<tr><td>${circuitLabel(name)}</td><td>${name}</td><td colspan="5">${format(v.volts, 1)} V,
+                ${format(v.hz, 2)} Hz</td></tr>`;
+      }
+      return `<tr><td>${circuitLabel(name)}</td><td>${name}</td><td>${power(v.watts)}</td>
+              <td>${format(v.amps, 2)} A</td><td>${format(v.va)} VA</td><td>${format(v.var)} var</td>
+              <td>${format(v.pf, 2)}</td></tr>`;
+    }
+
+    function drawMbmd(s) {
+      // One table per MBMD device: a row per quantity, a column for the total and each phase
+      const html = Object.entries(s.mbmd).map(([device, d]) => {
+        const columns = ['total', 'L1', 'L2', 'L3'];
+        const rows = Object.entries(d.values).sort().map(([quantity, values]) =>
+          `<tr><td>${quantity}</td>${columns.map(c => `<td>${format(values[c], 2)}</td>`).join('')}</tr>`);
+        return `<div class="panel"><h2>${d.name} <small class="note">(MBMD ${device}, ${age(d.age_s)})</small></h2>
+                <table><thead><tr><th></th><th>Total</th><th>L1</th><th>L2</th><th>L3</th></tr></thead>
+                <tbody>${rows.join('')}</tbody></table></div>`;
+      });
+      document.getElementById('mbmd').innerHTML = html.join('');
+    }
+
+    function drawChart() {
+      const times = history.map(([time]) => time);
+      const traces = Object.entries(CHART_LINES).map(([name, read]) => ({
+        x: times,
+        y: history.map(([, snapshot]) => read(snapshot)),
+        name,
+        mode: 'lines',
+        line: { width: 1.5 },
+        visible: HIDDEN_BY_DEFAULT.has(name) ? 'legendonly' : true,
+        hovertemplate: `%{y:.0f} W<extra>${name}</extra>`,
+      }));
+      Plotly.react('chart', traces, {
+        xaxis: { type: 'date' },
+        yaxis: { title: 'W', rangemode: 'tozero' },
+        hovermode: 'x unified',
+        margin: { t: 10, r: 20, b: 40, l: 60 },
+        height: 320,
+        uirevision: 'keep',     // keep the legend selection and zoom between updates
+      }, { responsive: true });
+    }
+
+    // ---- Updating
+
+    async function update() {
+      if (paused) return;
+      let snapshot;
+      try {
+        const response = await fetch(LIVE);
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        snapshot = await response.json();
+      } catch (e) {
+        document.getElementById('status').textContent = `Error: ${e.message}`;
+        return;
+      }
+      history.push([new Date(snapshot.now * 1000), snapshot]);
+      while (history.length && history[0][0] < Date.now() - HISTORY_MINUTES * 60 * 1000) history.shift();
+
+      drawTiles(snapshot);
+      drawChart();
+      drawPhases(snapshot);
+      drawHeaters(snapshot);
+      drawIotawatt(snapshot);
+      drawMbmd(snapshot);
+      const io = snapshot.iotawatt;
+      document.getElementById('status').textContent =
+        `Updated ${new Date(snapshot.now * 1000).toLocaleTimeString()} · IoTaWatt ${io.error || age(io.age_s)}`;
+    }
+
+    document.getElementById('minutes').textContent = HISTORY_MINUTES;
+    document.getElementById('pause').addEventListener('click', event => {
+      paused = !paused;
+      event.target.textContent = paused ? 'Resume' : 'Pause';
+      if (!paused) update();
+    });
+    update();
+    setInterval(update, REFRESH_S * 1000);
+  </script>
+</main>
+</body>
+</html>
