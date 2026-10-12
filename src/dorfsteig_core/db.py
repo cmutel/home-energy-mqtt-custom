@@ -73,7 +73,46 @@ CREATE TABLE IF NOT EXISTS air_quality (
 );
 """
 
-ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY]
+# Derived by dorfsteig_ingest.energy from the tables above; can be rebuilt.
+# Upstairs = whole house (MBMD: PV - grid) - downstairs panel (IoTaWatt mains).
+# The upstairs water heater isn't measured; it's estimated from ±1498 W steps.
+HOUSE_MINUTES = """
+CREATE TABLE IF NOT EXISTS house_minutes (
+    ts             INTEGER NOT NULL PRIMARY KEY,
+    pv             REAL,   -- W, gaps up to 5 min filled, else 0 (inverter asleep)
+    house          REAL,   -- W, whole house consumption
+    downstairs     REAL,   -- W, IoTaWatt mains A + B
+    upstairs       REAL,   -- W, house - downstairs
+    upstairs_water REAL    -- W, estimated: 1498 or 0
+);
+"""
+
+# One row per hour (ts = start of the hour, UTC epoch). Energies in Wh.
+# Import/export come from the meter counters where possible, so they're
+# right even when minutes are missing; other values are scaled up from the
+# minutes available (see the *_minutes columns).
+ENERGY_HOURLY = """
+CREATE TABLE IF NOT EXISTS energy_hourly (
+    ts                  INTEGER NOT NULL PRIMARY KEY,
+    pv_wh               REAL,
+    import_wh           REAL,
+    export_wh           REAL,
+    house_wh            REAL,   -- pv + import - export
+    downstairs_wh       REAL,
+    downstairs_water_wh REAL,   -- measured by IoTaWatt
+    upstairs_wh         REAL,   -- house - downstairs
+    upstairs_water_wh   REAL,   -- estimated
+    high_tariff         INTEGER NOT NULL,
+    import_price        REAL,   -- CHF/kWh; NULL if there are no prices for the year
+    export_price        REAL,
+    import_chf          REAL,
+    export_chf          REAL,
+    grid_minutes        INTEGER NOT NULL,
+    iotawatt_minutes    INTEGER NOT NULL
+);
+"""
+
+ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, HOUSE_MINUTES, ENERGY_HOURLY]
 
 
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:

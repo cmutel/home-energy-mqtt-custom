@@ -74,6 +74,15 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
       status. Replaces `warn_mbmd_down.py`.
 - [ ] Add Pushover credentials on the Pi; run "test all heaters" once.
 
+### 2b. Energy and costs (code done 2026-10-12)
+
+- [x] Upstairs consumption = whole house (MBMD) - downstairs panel (IoTaWatt);
+      upstairs water heater estimated from 1498 W steps.
+- [x] High/low tariff prices for import and export; hourly energy and cost table.
+- [x] InfluxDB history import (MBMD since 2024-11); dashboards: upstairs in
+      daily consumption, new energy & costs page.
+- [ ] Import InfluxDB history and enable `dorfsteig-ingest@energy` on the Pi.
+
 ### 3. New PV control
 
 - Surplus = export + power of automatic heaters currently on.
@@ -84,7 +93,6 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 
 ### 4. Forecasts and machine learning
 
-- Import InfluxDB history (years of 1-minute PV and grid data) into SQLite.
 - Open-Meteo forecasts and historical archive (radiation, temperature).
 - First model: PV from forecast radiation, compared against a simple
   baseline. Then house load and heating demand.

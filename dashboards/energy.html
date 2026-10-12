@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Energy &amp; Costs — Home Energy</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; }
+    h2 { margin: 0 0 8px; font-size: 1.1rem; }
+    nav { margin-bottom: 16px; }
+    nav a {
+      display: inline-block; padding: 6px 14px; margin-right: 6px;
+      background: white; border-radius: 4px; text-decoration: none;
+      color: #333; border: 1px solid #ccc; font-size: 0.9rem;
+    }
+    nav a.active { background: #4c78a8; color: white; border-color: #4c78a8; }
+    nav a:hover:not(.active) { background: #e8e8e8; }
+    .controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+      background: white; padding: 12px 16px; border-radius: 6px;
+    }
+    .controls label { font-weight: bold; }
+    input, select { font-size: 1rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button {
+      font-size: 1rem; padding: 4px 14px; cursor: pointer;
+      border: 1px solid #ccc; border-radius: 4px; background: white;
+    }
+    button:hover { background: #e8e8e8; }
+    #status { margin-left: 8px; color: #888; font-size: 0.9rem; }
+    .panel { background: white; border-radius: 6px; padding: 12px; margin-bottom: 16px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .row .panel { flex: 1; min-width: 320px; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { padding: 4px 8px; text-align: right; border-bottom: 1px solid #eee; }
+    td:first-child, th:first-child { text-align: left; }
+    .note { color: #888; font-size: 0.85rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="daily.html">Daily consumption</a>
+    <a href="power.html">Solar &amp; grid</a>
+    <a href="energy.html" class="active">Energy &amp; costs</a>
+    <a href="climate.html">Air quality</a>
+  </nav>
+  <h1>Energy &amp; Costs</h1>
+  <div class="controls">
+    <select id="mode">
+      <option value="month">Month (by day)</option>
+      <option value="year">Year (by month)</option>
+    </select>
+    <button id="prev">&#9664;</button>
+    <input type="month" id="month">
+    <input type="number" id="year" min="2023" max="2100" style="width: 6em; display: none">
+    <button id="next">&#9654;</button>
+    <span id="status"></span>
+  </div>
+  <div class="panel"><h2>Consumption and PV</h2><div id="usage"></div></div>
+  <div class="panel"><h2>Costs and revenue</h2><div id="money"></div></div>
+  <div class="row">
+    <div class="panel"><h2>Energy</h2><table id="energy"></table></div>
+    <div class="panel"><h2>Money</h2><table id="costs"></table></div>
+  </div>
+  <p class="note">
+    Whole-house figures come from the grid meter and inverter (MBMD), the downstairs panel from IoTaWatt;
+    upstairs is the difference. The upstairs water heater isn't measured: it's estimated from 1498&nbsp;W
+    switching steps, so treat daily values as approximate. High tariff: Mon–Fri 07–20, Sat 07–13, except
+    public holidays. Costs only for years with prices (2026 onwards). Hours without data are missing
+    from the totals.
+  </p>
+
+  <script>
+    const API = '/datasette';
+    const mode = document.getElementById('mode');
+    const monthInput = document.getElementById('month');
+    const yearInput = document.getElementById('year');
+    const status = document.getElementById('status');
+
+    const kwh = v => v == null ? '–' : `${v.toFixed(1)} kWh`;
+    const chf = v => v == null ? '–' : `CHF ${v.toFixed(2)}`;
+    const pct = v => v == null || !isFinite(v) ? '–' : `${(100 * v).toFixed(0)}%`;
+
+    function range() {
+      if (mode.value === 'month') {
+        const [y, m] = monthInput.value.split('-').map(Number);
+        const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+        return { start: `${monthInput.value}-01`, end: `${next}-01`, group: '%Y-%m-%d' };
+      }
+      const y = Number(yearInput.value);
+      return { start: `${y}-01-01`, end: `${y + 1}-01-01`, group: '%Y-%m' };
+    }
+
+    async function load() {
+      const { start, end, group } = range();
+      status.textContent = 'Loading…';
+      const sql = `
+        SELECT strftime('${group}', ts, 'unixepoch', 'localtime') AS period,
+          SUM(pv_wh) / 1000.0 AS pv,
+          SUM(house_wh) / 1000.0 AS house,
+          SUM(import_wh) / 1000.0 AS import,
+          SUM(export_wh) / 1000.0 AS export,
+          SUM(import_wh * high_tariff) / 1000.0 AS import_ht,
+          SUM(export_wh * high_tariff) / 1000.0 AS export_ht,
+          SUM(downstairs_wh) / 1000.0 AS down,
+          SUM(downstairs_water_wh) / 1000.0 AS down_water,
+          SUM(upstairs_wh) / 1000.0 AS up,
+          SUM(upstairs_water_wh) / 1000.0 AS up_water,
+          SUM(CASE WHEN high_tariff THEN import_chf END) AS import_chf_ht,
+          SUM(CASE WHEN NOT high_tariff THEN import_chf END) AS import_chf_nt,
+          SUM(export_chf) AS export_chf,
+          SUM((pv_wh - export_wh) / 1000.0 * import_price) AS saved_chf,
+          COUNT(*) AS hours
+        FROM energy_hourly
+        WHERE ts >= CAST(strftime('%s', '${start}', 'utc') AS INTEGER)
+          AND ts < CAST(strftime('%s', '${end}', 'utc') AS INTEGER)
+        GROUP BY period ORDER BY period
+      `;
+      let rows;
+      try {
+        const resp = await fetch(`${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`);
+        rows = await resp.json();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        return;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        status.textContent = rows && rows.error ? rows.error : 'No data for this period.';
+        ['usage', 'money'].forEach(id => Plotly.purge(id));
+        document.getElementById('energy').innerHTML = '';
+        document.getElementById('costs').innerHTML = '';
+        return;
+      }
+      const hours = rows.reduce((s, r) => s + r.hours, 0);
+      status.textContent = `${hours} hours with data`;
+      renderUsage(rows);
+      renderMoney(rows);
+      renderTables(rows);
+    }
+
+    function split(r) {
+      // Hours without IoTaWatt data can't be split into downstairs/upstairs
+      const down = r.down ?? 0, up = r.up ?? 0;
+      return {
+        downWater: r.down_water ?? 0,
+        downOther: down - (r.down_water ?? 0),
+        upWater: r.up_water ?? 0,
+        upOther: up - (r.up_water ?? 0),
+        unsplit: Math.max(0, (r.house ?? 0) - down - up),
+      };
+    }
+
+    function renderUsage(rows) {
+      const x = rows.map(r => r.period);
+      const parts = rows.map(split);
+      const bar = (name, key, color) => ({
+        x, y: parts.map(p => p[key]), name, type: 'bar', marker: { color },
+        hovertemplate: '%{y:.1f} kWh<extra>' + name + '</extra>',
+      });
+      Plotly.react('usage', [
+        bar('Downstairs water heater', 'downWater', '#9ecae9'),
+        bar('Downstairs other', 'downOther', '#4c78a8'),
+        bar('Upstairs water heater (est.)', 'upWater', '#ffbf79'),
+        bar('Upstairs other', 'upOther', '#f58518'),
+        bar('Not split (no IoTaWatt data)', 'unsplit', '#bab0ac'),
+        { x, y: rows.map(r => r.pv), name: 'PV generation', type: 'scatter', mode: 'lines+markers',
+          line: { color: '#e5b700', width: 2 }, hovertemplate: '%{y:.1f} kWh<extra>PV</extra>' },
+      ], {
+        barmode: 'stack', hovermode: 'x unified',
+        yaxis: { title: 'kWh', rangemode: 'tozero' },
+        margin: { t: 10, r: 20, b: 50, l: 60 }, height: 380,
+      });
+    }
+
+    function renderMoney(rows) {
+      const x = rows.map(r => r.period);
+      const net = rows.map(r => (r.import_chf_ht ?? 0) + (r.import_chf_nt ?? 0) - (r.export_chf ?? 0));
+      Plotly.react('money', [
+        { x, y: rows.map(r => r.import_chf_ht), name: 'Import, high tariff', type: 'bar',
+          marker: { color: '#e45756' }, hovertemplate: 'CHF %{y:.2f}<extra>Import HT</extra>' },
+        { x, y: rows.map(r => r.import_chf_nt), name: 'Import, low tariff', type: 'bar',
+          marker: { color: '#ff9d98' }, hovertemplate: 'CHF %{y:.2f}<extra>Import NT</extra>' },
+        { x, y: rows.map(r => r.export_chf == null ? null : -r.export_chf), name: 'PV export revenue',
+          type: 'bar', marker: { color: '#54a24b' }, hovertemplate: 'CHF %{y:.2f}<extra>Export</extra>' },
+        { x, y: net, name: 'Net cost', type: 'scatter', mode: 'lines+markers',
+          line: { color: '#333', width: 2 }, hovertemplate: 'CHF %{y:.2f}<extra>Net</extra>' },
+      ], {
+        barmode: 'relative', hovermode: 'x unified',
+        yaxis: { title: 'CHF', zeroline: true },
+        margin: { t: 10, r: 20, b: 50, l: 60 }, height: 340,
+      });
+    }
+
+    function renderTables(rows) {
+      const sum = key => rows.some(r => r[key] != null) ? rows.reduce((s, r) => s + (r[key] ?? 0), 0) : null;
+      const t = Object.fromEntries(Object.keys(rows[0]).map(k => [k, sum(k)]));
+      const parts = rows.map(split).reduce((a, p) => {
+        for (const k in p) a[k] = (a[k] ?? 0) + p[k];
+        return a;
+      }, {});
+      const selfUse = t.pv != null && t.export != null ? t.pv - t.export : null;
+      const energy = [
+        ['PV generation', kwh(t.pv)],
+        ['House consumption', kwh(t.house)],
+        ['&nbsp;&nbsp;Downstairs water heater', kwh(parts.downWater)],
+        ['&nbsp;&nbsp;Downstairs other', kwh(parts.downOther)],
+        ['&nbsp;&nbsp;Upstairs water heater (est.)', kwh(parts.upWater)],
+        ['&nbsp;&nbsp;Upstairs other', kwh(parts.upOther)],
+        ['&nbsp;&nbsp;Not split', kwh(parts.unsplit)],
+        ['Self-consumed PV', kwh(selfUse)],
+        ['Self-consumption rate (of PV)', pct(selfUse / t.pv)],
+        ['Self-sufficiency (of consumption)', pct(selfUse / t.house)],
+        ['Import, high / low tariff', `${kwh(t.import_ht)} / ${kwh(t.import - t.import_ht)}`],
+        ['Export, high / low tariff', `${kwh(t.export_ht)} / ${kwh(t.export - t.export_ht)}`],
+      ];
+      const importChf = t.import_chf_ht == null && t.import_chf_nt == null
+        ? null : (t.import_chf_ht ?? 0) + (t.import_chf_nt ?? 0);
+      const costs = [
+        ['Import, high tariff', chf(t.import_chf_ht)],
+        ['Import, low tariff', chf(t.import_chf_nt)],
+        ['PV export revenue', chf(t.export_chf)],
+        ['<b>Net cost</b>', `<b>${chf(importChf == null ? null : importChf - (t.export_chf ?? 0))}</b>`],
+        ['Saved by self-consumed PV', chf(t.saved_chf)],
+        ['Total PV value (saved + revenue)', chf(t.saved_chf == null ? null : t.saved_chf + (t.export_chf ?? 0))],
+      ];
+      const html = rows => rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+      document.getElementById('energy').innerHTML = html(energy);
+      document.getElementById('costs').innerHTML = html(costs);
+    }
+
+    function shift(delta) {
+      if (mode.value === 'month') {
+        const [y, m] = monthInput.value.split('-').map(Number);
+        const d = new Date(y, m - 1 + delta, 1);
+        monthInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      } else {
+        yearInput.value = Number(yearInput.value) + delta;
+      }
+      load();
+    }
+
+    function setMode() {
+      monthInput.style.display = mode.value === 'month' ? '' : 'none';
+      yearInput.style.display = mode.value === 'year' ? '' : 'none';
+      load();
+    }
+
+    const today = new Date();
+    monthInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    yearInput.value = today.getFullYear();
+    mode.addEventListener('change', setMode);
+    monthInput.addEventListener('change', load);
+    yearInput.addEventListener('change', load);
+    document.getElementById('prev').addEventListener('click', () => shift(-1));
+    document.getElementById('next').addEventListener('click', () => shift(+1));
+    load();
+  </script>
+</body>
+</html>

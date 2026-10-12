@@ -4,10 +4,11 @@ Each long-running command is its own systemd service (see deploy/systemd/).
 """
 
 import argparse
+from datetime import date
 
 from dorfsteig_core.db import init_db
 from dorfsteig_core.logs import setup_logging
-from dorfsteig_ingest import climate, iotawatt, listen, power
+from dorfsteig_ingest import climate, energy, influx, iotawatt, listen, power
 
 
 def main() -> None:
@@ -22,6 +23,12 @@ def main() -> None:
     bf.add_argument("--from", dest="start", default=None,
                     help="ISO date or relative (2d, 1w); default 2023-08-10")
     bf.add_argument("--test", action="store_true", help="Only fetch the first 10 hours")
+
+    en = sub.add_parser("energy", help="Keep house_minutes and energy_hourly up to date (every 5 minutes)")
+    en.add_argument("--rebuild", action="store_true", help="Recompute everything once and exit")
+
+    im = sub.add_parser("import-influx", help="One-off: import MBMD history from the legacy InfluxDB")
+    im.add_argument("--from", dest="start", default=None, help="ISO date; default 2024-11-01")
 
     sh = sub.add_parser("shift-iotawatt", help="One-off: repair timestamps stored before 2026-10-12")
     sh.add_argument("hours", type=int, help="Hours to add to every stored IoTaWatt timestamp")
@@ -43,6 +50,13 @@ def main() -> None:
         case "backfill-iotawatt":
             start = iotawatt.parse_start(args.start) if args.start else iotawatt.DEFAULT_START
             iotawatt.backfill(start, max_hours=10 if args.test else None)
+        case "energy":
+            if args.rebuild:
+                energy.rebuild(init_db())
+            else:
+                energy.run()
+        case "import-influx":
+            influx.import_history(date.fromisoformat(args.start) if args.start else influx.FIRST_DAY)
         case "shift-iotawatt":
             deleted, shifted = iotawatt.shift_timestamps(init_db(), args.hours * 3600)
             print(f"Deleted {deleted} empty rows, shifted {shifted} rows by {args.hours} h")

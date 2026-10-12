@@ -36,6 +36,7 @@
   <nav>
     <a href="daily.html" class="active">Daily consumption</a>
     <a href="power.html">Solar &amp; grid</a>
+    <a href="energy.html">Energy &amp; costs</a>
     <a href="climate.html">Air quality</a>
   </nav>
   <h1>Daily Energy Consumption</h1>
@@ -58,6 +59,14 @@
       'Mains':      ['mains_a', 'mains_b'],
       'Heating':    ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'],
       'Appliances': ['oven', 'stovetop', 'clothes_washer', 'clothes_dryer', 'water_heater', 'dishwasher'],
+      'Upstairs':   ['upstairs_water', 'upstairs_other'],
+    };
+
+    // The upstairs panel isn't measured: upstairs = whole house (MBMD) - downstairs mains
+    // (IoTaWatt), and its water heater is estimated from switching steps (see energy.py).
+    const SQL = {
+      upstairs_water: 'h.upstairs_water',
+      upstairs_other: 'h.upstairs - h.upstairs_water',
     };
 
     const LABELS = {
@@ -66,6 +75,9 @@
       zone_c: 'Upstairs bathroom / parents / playroom south',
       zone_d: 'Upstairs hallway',
       zone_e: 'Kids bedroom / playroom north / balcony',
+      water_heater: 'Downstairs water heater',
+      upstairs_water: 'Upstairs water heater (estimated)',
+      upstairs_other: 'Upstairs other (heating, lights, office, bedrooms)',
     };
 
     const CHANNELS = Object.entries(GROUPS).flatMap(([group, names]) =>
@@ -77,13 +89,14 @@
 
     async function load(day) {
       status.textContent = 'Loading…';
-      const cols = CHANNELS.map(c => c.name).join(', ');
+      const cols = CHANNELS.map(c => `${SQL[c.name] ?? 'i.' + c.name} AS ${c.name}`).join(', ');
       const sql = `
-        SELECT datetime(ts, 'unixepoch', 'localtime') AS time, ${cols}
-        FROM iotawatt_readings
-        WHERE ts >= CAST(strftime('%s', '${day}', 'utc') AS INTEGER)
-        AND ts < CAST(strftime('%s', '${day}', '+1 day', 'utc') AS INTEGER)
-        ORDER BY ts
+        SELECT datetime(i.ts, 'unixepoch', 'localtime') AS time, ${cols}
+        FROM iotawatt_readings i
+        LEFT JOIN house_minutes h ON h.ts = i.ts
+        WHERE i.ts >= CAST(strftime('%s', '${day}', 'utc') AS INTEGER)
+        AND i.ts < CAST(strftime('%s', '${day}', '+1 day', 'utc') AS INTEGER)
+        ORDER BY i.ts
       `;
       const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
 
@@ -134,7 +147,9 @@
     // Sum watts over all one-minute readings → Wh (÷60), display as kWh
     const TOTALS = [
       { label: 'Heating',       fields: ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'] },
-      { label: 'Water heater',  fields: ['water_heater'] },
+      { label: 'Water heater downstairs', fields: ['water_heater'] },
+      { label: 'Water heater upstairs (est.)', fields: ['upstairs_water'] },
+      { label: 'Upstairs other', fields: ['upstairs_other'] },
       { label: 'Clothes dryer', fields: ['clothes_dryer'] },
       { label: 'Oven',          fields: ['oven'] },
       { label: 'Clothes washer',fields: ['clothes_washer'] },
@@ -159,8 +174,8 @@
         marker: { color: '#4c78a8' },
       }], {
         xaxis: { title: 'kWh', rangemode: 'tozero' },
-        margin: { t: 20, r: 100, b: 50, l: 120 },
-        height: 300,
+        margin: { t: 20, r: 100, b: 50, l: 190 },
+        height: 340,
       });
     }
 

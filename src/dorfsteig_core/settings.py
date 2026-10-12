@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     db_path: Path = _default_db_path
 
+    # Legacy InfluxDB with MBMD history (written by ~/DataNetwork/mbmd_listener.py)
+    influx_url: str = "http://localhost:8086"
+    influx_db: str = "dorfsteig"
+
     # Heating controller web server; nginx proxies the ESP32 URLs to it
     control_host: str = "127.0.0.1"
     control_port: int = 8002

@@ -70,7 +70,19 @@ uv run dorfsteig-ingest climate             # air quality sensors
 uv run dorfsteig-ingest backfill-iotawatt   # history since 2023-08-10 (resumable)
 uv run dorfsteig-ingest backfill-iotawatt --from 2w
 uv run dorfsteig-ingest listen 'haus/#' 2   # show one payload per topic for 2 minutes
+uv run dorfsteig-ingest import-influx       # one-off: MBMD history from the legacy InfluxDB
+uv run dorfsteig-ingest energy              # keep house_minutes / energy_hourly up to date
+uv run dorfsteig-ingest energy --rebuild    # recompute them from scratch
 ```
+
+## Energy, upstairs and costs
+
+The house has two breaker panels; IoTaWatt only measures the downstairs one.
+MBMD measures the whole house at the grid connection, so `upstairs = (PV -
+grid) - (mains A + B)`. The upstairs water heater (1498 W) is estimated from
+switching steps in that signal. `dorfsteig_ingest.energy` writes the results
+to `house_minutes` and, with high/low tariff prices from
+`dorfsteig_core/tariff.py`, to `energy_hourly`. Add next year's prices there.
 
 ## Heating controller
 
@@ -118,7 +130,8 @@ Services:
 ```bash
 sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now dorfsteig-ingest@power dorfsteig-ingest@iotawatt dorfsteig-ingest@climate
+sudo systemctl enable --now dorfsteig-ingest@power dorfsteig-ingest@iotawatt dorfsteig-ingest@climate \
+    dorfsteig-ingest@energy
 sudo systemctl enable --now dorfsteig-datasette
 
 journalctl -u dorfsteig-ingest@power -f
