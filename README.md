@@ -47,6 +47,7 @@ uv sync --all-extras
 uv run pytest
 uv run ruff check
 uv run lint-imports
+uv run --extra ml python notebooks/pv_model.py /tmp/dorfsteig.sqlite   # PV model comparison
 ```
 
 Settings come from environment variables with the `DORFSTEIG_` prefix, or a
@@ -114,14 +115,34 @@ grid) - downstairs`, where downstairs = mains A + B + the third-phase
 channels (zone C, washer) + the second leg of the two-phase water heater,
 oven and stovetop, which draw twice their channel (see
 `dorfsteig_core/iotawatt.py`). The upstairs water heater (2950 W) is
-estimated from switching steps in that signal. `dorfsteig_ingest.energy` writes the results
-to `house_minutes` and, with high/low tariff prices from
-`dorfsteig_core/tariff.py`, to `energy_hourly`. Add next year's prices there.
+estimated from switching steps in that signal (it finds ~80% of the energy).
+`dorfsteig_ingest.energy` writes the results to `house_minutes` and, with
+high/low tariff prices from `dorfsteig_core/tariff.py`, to `energy_hourly`.
+Add next year's prices there. After changing how these are computed, run
+`dorfsteig-ingest energy --rebuild` (with `dorfsteig-ingest@energy` stopped).
+
+## Dashboards
+
+Static pages in `dashboards/`, served by nginx at `/dashboards/`. They query
+Datasette from the browser, except the real-time page, which polls the
+controller's `/heating/api/live`. They use the heating UI's stylesheet
+(`pico.min.css` is a symlink to it) plus `dashboards.css`, and share circuit
+names from `channels.js`.
+
+| Page | What |
+|---|---|
+| `daily.html` | One day, every circuit per minute, totals per circuit |
+| `power.html` | One day of PV, house and grid power |
+| `energy.html` | Energy and costs by day or month, high/low tariff |
+| `climate.html` | Air quality sensors |
+| `learning.html` | Forecasts vs measurements (temperature, radiation, PV) with errors |
+| `realtime.html` | Everything measured right now, every 5 s: IoTaWatt series, MBMD per phase, heater relays |
+| `status.html` | Age of each data source |
 
 ## Heating controller
 
-One process (`dorfsteig-control run`) reads grid power from MQTT, decides
-every 20 s which heaters should be on, and serves:
+One process (`dorfsteig-control run`) reads MBMD from MQTT, decides every
+20 s which heaters should be on, and serves:
 
 | URL | What |
 |---|---|
@@ -129,10 +150,22 @@ every 20 s which heaters should be on, and serves:
 | `/status.json` | Same shape as the legacy controller's status file |
 | `/heating/` | Web UI: status, boosts, schedules, PV settings, wattage tests, notifications, history |
 | `/heating/api/status` | Everything on the status page as JSON |
+| `/heating/api/live` | Every live value, for the real-time dashboard (`live.py`) |
 
-Config (schedule rules, PV thresholds and priority, notification times) is
+Config (schedule rules, PV settings and priority, notification times) is
 stored in SQLite and edited in the web UI; every version is kept. The control
 logic is a pure function in `engine.py`; its docstring describes the rules.
+Each new behaviour has a shadow mode that only logs what it would do (History
+page, "dry run"), set on the Solar page:
+
+| Setting | Modes | Module |
+|---|---|---|
+| Water heaters | always on / shadow / pv (PV first, with backup and safety) | `water.py` |
+| Room heaters on PV | legacy / shadow / fit (fit to the surplus below a temperature limit) | `engine.py` |
+| Night plan | off / shadow / on (grid charging before cold days) | `night.py` |
+
+Pushover sends alerts (grid data, boards, sensors offline, wattage drift),
+the evening summary and the 06:00 morning report (`report.py`).
 
 ```bash
 uv run dorfsteig-control import-legacy-config ~/config.json   # once, from write_config.py output
@@ -193,6 +226,10 @@ sudo ln -s /etc/nginx/sites-available/dorfsteig /etc/nginx/sites-enabled/
 sudo rm /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+Updating: `git pull`, then `uv sync --no-dev --extra datasette
+--reinstall-package dorfsteig` if a command was added (uv may not notice new
+entry points), and restart the services whose code changed.
 
 Heating UI: `http://192.168.1.192/heating/`. Dashboards:
 `http://192.168.1.192/dashboards/`. Datasette: `http://192.168.1.192/datasette/`.

@@ -30,8 +30,13 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 - Heater circuits are roughly 2000 W each, but this is not precise and changes
   when heaters on a circuit are disabled by hand. IoTaWatt measures heating
   zones A–F and the water heater separately.
-- As of 2026-10-11 the Pi runs the legacy controller with `HEATING = False`,
-  so no heaters are switched on PV surplus.
+- Three-phase supply, but the downstairs mains CTs cover only two phases. Zone
+  C and the washer are on the third phase with their own CTs; the water
+  heaters, oven and stovetop are two-phase loads (the CT sees one leg, they
+  draw twice that). Both water heaters are ~2950 W. See 2b and
+  `dorfsteig_core/iotawatt.py`.
+- Until 2026-10-12 the Pi ran the legacy controller with `HEATING = False`;
+  it now runs `dorfsteig-control` (water heaters in shadow mode).
 - Bugs in the legacy controller to fix in the port: `always_on` → false never
   turns a heater off; overnight time windows (start > stop) never match;
   stale JSON files keep heaters on if the controller dies; plus the issues in
@@ -48,7 +53,7 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
       the power dashboard.
 - [x] ESP32 firmware in the repo, WiFi credentials moved to an ignored file.
 - [x] Merged nginx config, systemd units.
-- [ ] Deploy ingest + Datasette on the Pi and start collecting data.
+- [x] Deploy ingest + Datasette on the Pi and start collecting data.
 
 ### 1. Controller port (code done 2026-10-11)
 
@@ -59,7 +64,7 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 - [x] State, config versions and event log in SQLite; logging to journald.
 - [x] ESP32 JSON served by the app (503 if the loop stalls); last poll per board.
 - [x] Dry-run mode with `--compare-legacy`; verified identical outputs live.
-- [ ] Deploy and cut over; retire supervisor's `control_heating`.
+- [x] Deploy and cut over; retire supervisor's `control_heating` (autostart off).
 
 ### 2. Web UI, wattage test, Pushover (code done 2026-10-11)
 
@@ -72,7 +77,8 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 - [x] Pushover with per-alert rate limiting: stale grid data, board offline,
       controller start, wattage drift; daily summary and optional midday
       status. Replaces `warn_mbmd_down.py`.
-- [ ] Add Pushover credentials on the Pi; run "test all heaters" once.
+- [x] Add Pushover credentials on the Pi.
+- [ ] Run "test all heaters" once (playroom north was just rewired by hand).
 
 ### 2b. Energy and costs (code done 2026-10-12)
 
@@ -89,9 +95,9 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 - [x] High/low tariff prices for import and export; hourly energy and cost table.
 - [x] InfluxDB history import (MBMD since 2024-11); dashboards: upstairs in
       daily consumption, new energy & costs page.
-- [ ] Import InfluxDB history and enable `dorfsteig-ingest@energy` on the Pi.
+- [x] Import InfluxDB history and enable `dorfsteig-ingest@energy` on the Pi.
 
-### 3. New PV control (draft 2026-10-12)
+### 3. New PV control (code done 2026-10-12)
 
 Goal: use more of the PV surplus in the house instead of exporting it.
 Exported power earns ~0.09 CHF/kWh; power used in the house saves
@@ -122,7 +128,7 @@ Facts:
 - [x] `weather_forecast`: every hourly fetch of MeteoSwiss ICON-CH1/CH2 and
       Open-Meteo best_match, plus day-ahead forecasts backfilled from 2025-10.
 - [x] Balcony and kitchen sensor history imported from InfluxDB.
-- [ ] Deploy: location and station in `.env`, `backfill-weather`,
+- [x] Deploy: location and station in `.env`, `backfill-weather`,
       `dorfsteig-ingest@weather`.
 
 Findings (2025-10 to 2026-10):
@@ -177,7 +183,9 @@ less (54 vs 69 kWh on the 83 days with water data).
 #### 3c. Water heaters as PV sinks (code done 2026-10-12)
 
 - [x] `water.py`, modes always on / shadow / pv on the Solar page.
-- [ ] Shadow for a few days, then pv.
+- [x] Shadow mode on the Pi (2026-10-12).
+- [ ] Strengthen the backup rule (the corrected replay runs the tanks low,
+      see 3b), then pv.
 
 - The relay only permits heating; the internal thermostat still decides.
 - Daytime: relay on only when there's PV surplus. Water heaters get surplus
@@ -288,8 +296,31 @@ a slightly colder house and more night charging. The temperature forecast
 (MAE 0.9 °C, ~1.6 kWh of need) and the rough need model matter more than
 the PV forecast.
 
+### 4e. Dashboards (code done 2026-10-12)
+
+- [x] Dashboards share the heating UI's look (Pico, `dashboards/dashboards.css`)
+      and circuit names (`dashboards/channels.js`), with links both ways.
+- [x] Learning: forecasts vs measurements per day, with errors; new models
+      or measurements are one entry in its `QUANTITIES` list.
+- [x] Real time: every IoTaWatt series and MBMD value (per phase), refreshed
+      every 5 s while open, via `/heating/api/live`; heater relays with
+      estimated power.
+
 ### 5. Next
 
+Paused 2026-10-12. Open, roughly in order:
+
+- Deploy the latest commits on the Pi, including `dorfsteig-ingest energy
+  --rebuild` for the two-phase correction, and `dorfsteig-forecast`.
+- Water heaters: a stronger backup (e.g. an evening top-up when not full
+  since the backup), replay until never cold, then pv mode.
+- Storage heaters: shadow on sunny days, then fit; night plan in shadow when
+  the first cold days come.
 - Tune from the shadow logs: temperature limit, kwh_per_degree, pv_credit.
+- Kitchen PM sensor: reads a flat 200-800 µg/m³ since 2026-05-12 (and
+  2025-05 to 07), while the balcony reads ~1: clean or replace it. An alert
+  for implausible readings would catch this earlier.
+- Upstairs: a CT on the upstairs water heater would replace the step
+  estimate (~20% low); look for other third-phase loads with the real-time page.
 - Water temperature sensors: replace "full" detection.
 - Per-heater heat need, once a winter of relay and IoTaWatt data exists.

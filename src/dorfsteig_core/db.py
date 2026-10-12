@@ -76,16 +76,18 @@ CREATE TABLE IF NOT EXISTS air_quality (
 # Derived by dorfsteig_ingest.energy from the tables above; can be rebuilt.
 # Upstairs = whole house (MBMD: PV - grid) - downstairs panel. The downstairs
 # mains CTs only cover two of the three phases, so downstairs = mains A + B +
-# zone C + clothes washer (on the third phase, with their own CTs). The
-# upstairs water heater isn't measured; it's estimated from ±1498 W steps.
+# zone C + clothes washer (on the third phase, with their own CTs) + the
+# second leg of the two-phase water heater, oven and stovetop (see
+# dorfsteig_core.iotawatt). The upstairs water heater isn't measured; it's
+# estimated from ±2950 W steps.
 HOUSE_MINUTES = """
 CREATE TABLE IF NOT EXISTS house_minutes (
     ts             INTEGER NOT NULL PRIMARY KEY,
     pv             REAL,   -- W, gaps up to 5 min filled, else 0 (inverter asleep)
     house          REAL,   -- W, whole house consumption
-    downstairs     REAL,   -- W, IoTaWatt mains A + B + zone C + clothes washer
+    downstairs     REAL,   -- W, IoTaWatt panel, see above
     upstairs       REAL,   -- W, house - downstairs
-    upstairs_water REAL,   -- W, estimated: 1498 or 0
+    upstairs_water REAL,   -- W, estimated: 2950 or 0
     upstairs_other REAL    -- W, upstairs - water heater
 );
 """
@@ -102,7 +104,7 @@ CREATE TABLE IF NOT EXISTS energy_hourly (
     export_wh           REAL,
     house_wh            REAL,   -- pv + import - export
     downstairs_wh       REAL,
-    downstairs_water_wh REAL,   -- measured by IoTaWatt
+    downstairs_water_wh REAL,   -- measured by IoTaWatt (twice the channel: two phases)
     upstairs_wh         REAL,   -- house - downstairs
     upstairs_water_wh   REAL,   -- estimated
     upstairs_other_wh   REAL,   -- upstairs - water heater
