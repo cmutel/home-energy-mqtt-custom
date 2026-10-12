@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     influx_url: str = "http://localhost:8086"
     influx_db: str = "dorfsteig"
 
+    # House location for weather data (Open-Meteo) and the nearest SwissMetNet
+    # station (lower-case abbreviation, see MeteoSwiss ogd-smn_meta_stations.csv).
+    # Keep them in .env: the repo is public.
+    latitude: float | None = None
+    longitude: float | None = None
+    meteoswiss_station: str | None = None
+
     # Heating controller web server; nginx proxies the ESP32 URLs to it
     control_host: str = "127.0.0.1"
     control_port: int = 8002

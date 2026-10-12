@@ -73,6 +73,9 @@ uv run dorfsteig-ingest listen 'haus/#' 2   # show one payload per topic for 2 m
 uv run dorfsteig-ingest import-influx       # one-off: MBMD history from the legacy InfluxDB
 uv run dorfsteig-ingest energy              # keep house_minutes / energy_hourly up to date
 uv run dorfsteig-ingest energy --rebuild    # recompute them from scratch
+uv run dorfsteig-ingest backfill-weather    # MeteoSwiss station, ERA5 and day-ahead forecast history
+uv run dorfsteig-ingest weather             # hourly forecasts and station data
+uv run dorfsteig-control replay             # compare water heater policies on recorded data
 ```
 
 ## Energy, upstairs and costs

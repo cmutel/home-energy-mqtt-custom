@@ -3,11 +3,14 @@
 import argparse
 import asyncio
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
+from dorfsteig_control import replay
 from dorfsteig_control.config import from_legacy
 from dorfsteig_control.service import Controller, serve
 from dorfsteig_control.store import Store
+from dorfsteig_core import tariff
 from dorfsteig_core.db import init_db
 from dorfsteig_core.logs import setup_logging
 from dorfsteig_core.settings import settings
@@ -35,6 +38,11 @@ def main() -> None:
 
     sub.add_parser("show-config", help="Print the current config as JSON")
 
+    rp = sub.add_parser("replay", help="Compare water heater policies on recorded data (offline)")
+    rp.add_argument("--from", dest="start", type=date.fromisoformat, default=date(2026, 4, 1))
+    rp.add_argument("--to", dest="end", type=date.fromisoformat, default=date.today() - timedelta(days=1))
+    rp.add_argument("--prices", type=int, default=None, help="Use one year's prices, e.g. 2027")
+
     args = parser.parse_args()
     setup_logging()
     store = Store(init_db())
@@ -58,6 +66,11 @@ def main() -> None:
             print(config.model_dump_json(indent=2))
         case "show-config":
             print(store.load_config().model_dump_json(indent=2))
+        case "replay":
+            prices = tariff.PRICES[args.prices] if args.prices else None
+            runs = replay.load_days(store.conn, args.start, args.end, prices)
+            forecast = replay.load_forecast(store.conn)
+            print(replay.report([replay.replay(p, runs, forecast) for p in replay.POLICIES]))
 
 
 if __name__ == "__main__":

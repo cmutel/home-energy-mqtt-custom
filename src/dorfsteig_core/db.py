@@ -116,9 +116,42 @@ CREATE TABLE IF NOT EXISTS energy_hourly (
 );
 """
 
+# Hourly weather observations, one row per source and hour (ts = start of the
+# hour, UTC epoch): "meteoswiss" = nearest SwissMetNet station (hourly means),
+# "era5" = Open-Meteo's ERA5 reanalysis (a few days behind). Radiation is as
+# published; against our PV, both line up with the hour starting at ts.
+# The balcony sensor stays in air_quality.
+WEATHER = """
+CREATE TABLE IF NOT EXISTS weather (
+    ts           INTEGER NOT NULL,
+    source       TEXT NOT NULL,
+    temperature  REAL,   -- °C at 2 m
+    radiation    REAL,   -- W/m², global horizontal
+    cloud_cover  REAL,   -- %
+    fetched_at   INTEGER NOT NULL,
+    PRIMARY KEY (ts, source)
+);
+"""
+
+# Every forecast fetched, kept by issue time so forecast skill can be
+# measured later. Models: "icon_ch1" / "icon_ch2" (MeteoSwiss, via
+# Open-Meteo), "best_match" (Open-Meteo's global default).
+WEATHER_FORECAST = """
+CREATE TABLE IF NOT EXISTS weather_forecast (
+    issued       INTEGER NOT NULL,   -- fetch time, rounded down to the hour
+    ts           INTEGER NOT NULL,
+    model        TEXT NOT NULL,
+    temperature  REAL,
+    radiation    REAL,
+    cloud_cover  REAL,
+    PRIMARY KEY (issued, ts, model)
+);
+"""
+
 DERIVED_TABLES = {"house_minutes": HOUSE_MINUTES, "energy_hourly": ENERGY_HOURLY}
 
-ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, *DERIVED_TABLES.values()]
+ALL_TABLES = [IOTAWATT_READINGS, INVERTER_READINGS, GRID_READINGS, AIR_QUALITY, WEATHER, WEATHER_FORECAST,
+              *DERIVED_TABLES.values()]
 
 
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:

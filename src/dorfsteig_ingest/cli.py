@@ -8,7 +8,7 @@ from datetime import date
 
 from dorfsteig_core.db import init_db
 from dorfsteig_core.logs import setup_logging
-from dorfsteig_ingest import climate, energy, influx, iotawatt, listen, power
+from dorfsteig_ingest import climate, energy, influx, iotawatt, listen, power, weather
 
 
 def main() -> None:
@@ -27,7 +27,11 @@ def main() -> None:
     en = sub.add_parser("energy", help="Keep house_minutes and energy_hourly up to date (every 5 minutes)")
     en.add_argument("--rebuild", action="store_true", help="Recompute everything once and exit")
 
-    im = sub.add_parser("import-influx", help="One-off: import MBMD history from the legacy InfluxDB")
+    sub.add_parser("weather", help="Update forecasts and station data every hour")
+    bw = sub.add_parser("backfill-weather", help="Fetch MeteoSwiss station and ERA5 history")
+    bw.add_argument("--from", dest="start", default="2023-08-01", help="ISO date; default 2023-08-01")
+
+    im = sub.add_parser("import-influx", help="One-off: import MBMD and air quality history from InfluxDB")
     im.add_argument("--from", dest="start", default=None, help="ISO date; default 2024-11-01")
 
     sh = sub.add_parser("shift-iotawatt", help="One-off: repair timestamps stored before 2026-10-12")
@@ -55,6 +59,12 @@ def main() -> None:
                 energy.rebuild(init_db())
             else:
                 energy.run()
+        case "weather":
+            weather.run()
+        case "backfill-weather":
+            conn = init_db()
+            weather.backfill(conn, date.fromisoformat(args.start))
+            weather.backfill_forecasts(conn, max(date.fromisoformat(args.start), date(2025, 10, 1)))
         case "import-influx":
             influx.import_history(date.fromisoformat(args.start) if args.start else influx.FIRST_DAY)
         case "shift-iotawatt":
