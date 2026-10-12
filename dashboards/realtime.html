@@ -55,8 +55,9 @@
   <p class="note">
     Updated every 5 seconds while this page is open (the IoTaWatt averages over 5 s; the stored history stays
     at one-minute values). House = PV − grid; downstairs = mains A + B + zone C + washer (the third phase has no
-    mains CT); upstairs = house − downstairs, so anything downstairs on the third phase without its own CT shows
-    up as upstairs. Per phase, the inverter's power is split by its current on each phase. MBMD and the IoTaWatt
+    mains CT) + the second leg of the two-phase water heater, oven and stovetop, which draw twice what their CT
+    shows; upstairs = house − downstairs, so anything else downstairs on the third phase without its own CT shows
+    up as upstairs. Current, apparent and reactive power are as the CT measures them (one leg). Per phase, the inverter's power is split by its current on each phase. MBMD and the IoTaWatt
     are a few seconds apart: compare steady loads, not the moment something switches.
   </p>
 
@@ -167,7 +168,7 @@
         for (const name of others) rows.push(iotawattRow(name, io));
       }
       document.getElementById('iotawatt').innerHTML =
-        '<thead><tr><th>Circuit</th><th>Series</th><th>Power</th><th>Current</th><th>Apparent</th>' +
+        '<thead><tr><th>Circuit</th><th>Series</th><th>Power</th><th>Current (CT)</th><th>Apparent</th>' +
         '<th>Reactive</th><th>Power factor</th></tr></thead><tbody>' +
         (rows.join('') || `<tr><td colspan="7">${io.error || 'No data'}</td></tr>`) + '</tbody>';
     }
@@ -178,7 +179,11 @@
         return `<tr><td>${circuitLabel(name)}</td><td>${name}</td><td colspan="5">${format(v.volts, 1)} V,
                 ${format(v.hz, 2)} Hz</td></tr>`;
       }
-      return `<tr><td>${circuitLabel(name)}</td><td>${name}</td><td>${power(v.watts)}</td>
+      // Two-phase loads: the CT sees one leg, the circuit draws twice that
+      const twoPhase = TWO_PHASE.has(name.toLowerCase());
+      const watts = twoPhase && v.watts !== null ? 2 * v.watts : v.watts;
+      return `<tr><td>${circuitLabel(name)}</td><td>${name}</td>
+              <td>${power(watts)}${twoPhase ? ' <small class="note">2 × channel</small>' : ''}</td>
               <td>${format(v.amps, 2)} A</td><td>${format(v.va)} VA</td><td>${format(v.var)} var</td>
               <td>${format(v.pf, 2)}</td></tr>`;
     }

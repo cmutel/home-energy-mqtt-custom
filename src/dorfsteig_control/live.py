@@ -12,7 +12,8 @@ Sources:
   switching something can be matched to the numbers.
 
 Derived, as in the energy tables (dorfsteig_ingest.energy): house = PV -
-grid, downstairs = mains A + B + the channels on the third phase, upstairs =
+grid, downstairs = mains A + B + the channels on the third phase + the
+second leg of the two-phase loads (water heater, oven, stovetop), upstairs =
 house - downstairs. Per phase, house = PV on that phase - grid on that phase,
 with the inverter's power split by its current per phase (it feeds all three
 about equally). Which IoTaWatt mains CT sits on which grid phase isn't
@@ -129,7 +130,8 @@ class LiveView:
         watts = {name.lower(): values.get("watts") for name, values in channels.items()}
         downstairs = None
         if all(watts.get(c) is not None for c in iotawatt.MAINS_CHANNELS):
-            panel = iotawatt.MAINS_CHANNELS + iotawatt.OFF_MAINS_CHANNELS
+            # As dorfsteig_core.iotawatt.downstairs_sql: the two-phase loads' second leg counts once more
+            panel = iotawatt.MAINS_CHANNELS + iotawatt.OFF_MAINS_CHANNELS + iotawatt.TWO_PHASE_CHANNELS
             downstairs = sum(watts.get(c) or 0.0 for c in panel)
         house = None
         if controller.grid_power is not None and controller.pv_power is not None:
@@ -143,7 +145,8 @@ class LiveView:
                        "downstairs": downstairs, "upstairs": upstairs},
             "phases": per_phase_house(devices),
             "downstairs_channels": {"mains": list(iotawatt.MAINS_CHANNELS),
-                                    "third_phase": list(iotawatt.OFF_MAINS_CHANNELS)},
+                                    "third_phase": list(iotawatt.OFF_MAINS_CHANNELS),
+                                    "two_phase": list(iotawatt.TWO_PHASE_CHANNELS)},
             "iotawatt": {"ts": iotawatt_ts, "age_s": None if iotawatt_ts is None else now - iotawatt_ts,
                          "error": self.error, "units": dict(self.series), "series": channels},
             "mbmd": devices,

@@ -135,11 +135,11 @@ def on_spans(conn: sqlite3.Connection, start: float, end: float,
 def measured_kwh(conn: sqlite3.Connection, heater: str,
                  spans: list[tuple[float, float, str]]) -> dict[str, float]:
     """Measured draw of a water heater within its on-spans, kWh per bucket."""
-    table, column = DRAW_SOURCES[heater]
+    table, power = DRAW_SOURCES[heater]
     totals = {"solar": 0.0, "scheduled": 0.0, "other": 0.0}
     for start, end, bucket in spans:
         try:
-            wh = conn.execute(f"SELECT SUM({column}) / 60.0 FROM {table} WHERE ts >= ? AND ts < ?",
+            wh = conn.execute(f"SELECT SUM({power}) / 60.0 FROM {table} WHERE ts >= ? AND ts < ?",
                               (start, end)).fetchone()[0]
         except sqlite3.OperationalError:
             wh = None
@@ -196,11 +196,11 @@ def heating_power(conn: sqlite3.Connection, start: float, end: float,
         if heater not in BY_ID:
             continue
         if heater in DRAW_SOURCES:
-            table, column = DRAW_SOURCES[heater]
+            table, power = DRAW_SOURCES[heater]
             for s, e, _ in spans:
                 try:
-                    rows = conn.execute(f"SELECT ts, {column} FROM {table} WHERE ts >= ? AND ts < ? "
-                                        f"AND {column} IS NOT NULL", (s, e)).fetchall()
+                    rows = conn.execute(f"SELECT ts, {power} FROM {table} WHERE ts >= ? AND ts < ? "
+                                        f"AND {power} IS NOT NULL", (s, e)).fetchall()
                 except sqlite3.OperationalError:
                     rows = []
                 for ts, w in rows:

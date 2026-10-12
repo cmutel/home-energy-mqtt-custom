@@ -2,7 +2,7 @@
 {% block title %}Solar{% endblock %}
 {% block content %}
 <h2>Water heaters</h2>
-<p class="muted">PV mode: water heaters get PV surplus first (on above {{ (1498 + water.on_margin_w) | int }} W export,
+<p class="muted">PV mode: water heaters get PV surplus first (on above {{ (heater_w + water.on_margin_w) | int }} W export,
 off above {{ water.off_import_w | int }} W import, at least {{ (water.min_on_s / 60) | int }} min on/off).
 A tank not seen full since the "full since" time heats until full at the backup time, and any tank not seen full
 for the safety time heats until full. Without grid data the tanks are on. Always-on rules are set aside in PV mode;

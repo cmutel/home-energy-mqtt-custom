@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from dorfsteig_control.heaters import BY_ID
+from dorfsteig_core.iotawatt import WATER_HEATER_W
 
 if TYPE_CHECKING:
     from dorfsteig_control.service import Controller
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DEFAULT_WATTS = 2000.0
-WATER_HEATER_WATTS = 1498.0   # both tanks, from their measured history
+WATER_HEATER_WATTS = WATER_HEATER_W   # both tanks, from their measured history
 
 # Active test timing (seconds)
 SETTLE_S = 30      # let earlier switching settle before the baseline

@@ -3,6 +3,10 @@
 // (Mains_A → mains_a), plus the derived upstairs values from house_minutes.
 // Same names as the morning report (src/dorfsteig_control/report.py).
 
+// Two-phase (400 V) loads with a CT on one leg only: they draw twice the channel
+// (see TWO_PHASE_CHANNELS in src/dorfsteig_core/iotawatt.py)
+const TWO_PHASE = new Set(['water_heater', 'oven', 'stovetop']);
+
 const CIRCUIT_GROUPS = [
   { title: 'Mains (2 of 3 phases)', circuits: {
       mains_a: 'Mains A',
@@ -15,9 +19,9 @@ const CIRCUIT_GROUPS = [
       zone_e: 'Zone E (kids, playroom N, balcony)',
       zone_f: 'Zone F' } },
   { title: 'Appliances', circuits: {
-      water_heater: 'Water heater downstairs',
-      oven: 'Oven',
-      stovetop: 'Stovetop',
+      water_heater: 'Water heater downstairs · 2 phases',
+      oven: 'Oven · 2 phases',
+      stovetop: 'Stovetop · 2 phases',
       dishwasher: 'Dishwasher',
       clothes_washer: 'Washer · 3rd phase',
       clothes_dryer: 'Dryer' } },

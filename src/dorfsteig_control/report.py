@@ -17,6 +17,7 @@ from datetime import date, datetime, time, timedelta
 
 from dorfsteig_control import forecasts
 from dorfsteig_control.summary import DaySummary, day_summary
+from dorfsteig_core.iotawatt import real_power
 
 # IoTaWatt channels, all on the downstairs panel
 CIRCUITS = {
@@ -111,7 +112,8 @@ def daily_report(conn: sqlite3.Connection, day: date) -> Report:
         hour: dict[str, float] = {}
         measured = channels.get(ts)
         if measured is not None:
-            channels_wh = {c: wh or 0 for c, wh in zip(CIRCUITS, measured)}
+            # Two-phase loads (water heater, oven, stovetop): twice the channel, see dorfsteig_core.iotawatt
+            channels_wh = {c: real_power(c, wh or 0) for c, wh in zip(CIRCUITS, measured)}
             hour.update({CIRCUITS[c]: wh for c, wh in channels_wh.items()})
             if down is not None:
                 hour[DOWNSTAIRS_OTHER] = down - sum(channels_wh.values())

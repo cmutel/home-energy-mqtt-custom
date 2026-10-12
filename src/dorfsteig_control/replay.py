@@ -25,13 +25,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from dorfsteig_core.iotawatt import WATER_HEATER_W
 from dorfsteig_core.tariff import Prices, is_high_tariff, prices_for
 
 TZ = ZoneInfo("Europe/Zurich")
 TANK_WH = 14_400            # 325 l from ~12 °C to 50 °C
 USABLE_WH = 10_000          # deficit beyond this counts as running cold
 HYSTERESIS_WH = 300         # thermostat restarts after this much use (median reheating run ~12 min)
-HEATER_W = 1498.0
+HEATER_W = WATER_HEATER_W
 PV_PER_RADIATION = 8.4      # W of PV per W/m² of global radiation (fitted on 2025-2026 data)
 SURPLUS_WINDOW = 3          # minutes of smoothing
 MIN_COVERAGE = 0.9          # share of minutes a day needs to be replayed
@@ -182,7 +183,8 @@ def load_days(conn: sqlite3.Connection, start: date, end: date,
     last = int(datetime.combine(end + timedelta(days=1), time(), TZ).timestamp())
     grid = dict(conn.execute("SELECT ts, power FROM grid_readings "
                              "WHERE ts >= ? AND ts < ? AND power IS NOT NULL", (first, last)))
-    down = dict(conn.execute("SELECT ts, water_heater FROM iotawatt_readings WHERE ts >= ? AND ts < ? "
+    # Downstairs the CT is on one of the heater's two legs: twice the channel
+    down = dict(conn.execute("SELECT ts, water_heater * 2 FROM iotawatt_readings WHERE ts >= ? AND ts < ? "
                              "AND water_heater IS NOT NULL", (first, last)))
     up = dict(conn.execute("SELECT ts, upstairs_water FROM house_minutes WHERE ts >= ? AND ts < ? "
                            "AND upstairs_water IS NOT NULL", (first, last)))

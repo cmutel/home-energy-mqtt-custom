@@ -10,7 +10,7 @@ databases:
           input_0:       Voltage (V)
           mains_a:       Mains circuit A (W)
           mains_b:       Mains circuit B (W)
-          oven:          Oven (W)
+          oven:          Oven, one of its two legs (W; draws twice this)
           zone_a:        Heating zone A (W)
           zone_b:        Heating zone B (W)
           zone_c:        Heating zone C (W)
@@ -19,9 +19,9 @@ databases:
           zone_f:        Heating zone F (W)
           clothes_washer: Clothes washer (W)
           clothes_dryer:  Clothes dryer (W)
-          water_heater:   Water heater (W)
+          water_heater:   Water heater, one of its two legs (W; the heater draws twice this)
           dishwasher:     Dishwasher (W)
-          stovetop:       Stovetop (W)
+          stovetop:       Stovetop, one of its two legs (W; draws twice this)
     queries:
       last_24h:
         title: Last 24 hours
@@ -31,7 +31,8 @@ databases:
             input_0,
             mains_a + mains_b AS mains_total,
             zone_a + zone_b + zone_c + zone_d + zone_e + zone_f AS heating_total,
-            oven, stovetop, dishwasher, clothes_washer, clothes_dryer, water_heater
+            oven * 2 AS oven, stovetop * 2 AS stovetop, dishwasher, clothes_washer, clothes_dryer,
+            water_heater * 2 AS water_heater
           FROM iotawatt_readings
           WHERE ts >= unixepoch('now', '-1 day')
           ORDER BY ts
@@ -43,9 +44,9 @@ databases:
             date(ts, 'unixepoch', 'localtime') AS day,
             ROUND(SUM(mains_a + mains_b) / 60.0) AS mains_wh,
             ROUND(SUM(zone_a + zone_b + zone_c + zone_d + zone_e + zone_f) / 60.0) AS heating_wh,
-            ROUND(SUM(oven + stovetop) / 60.0) AS cooking_wh,
+            ROUND(SUM(oven + stovetop) * 2 / 60.0) AS cooking_wh,
             ROUND(SUM(clothes_washer + clothes_dryer) / 60.0) AS laundry_wh,
-            ROUND(SUM(water_heater) / 60.0) AS water_heater_wh,
+            ROUND(SUM(water_heater) * 2 / 60.0) AS water_heater_wh,
             ROUND(SUM(dishwasher) / 60.0) AS dishwasher_wh
           FROM iotawatt_readings
           GROUP BY day
@@ -92,7 +93,7 @@ plugins:
               UNION ALL
               SELECT datetime(ts, 'unixepoch', 'localtime'),                           'mains_b',                  mains_b        FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'oven',                     oven           FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'oven',                     oven * 2        FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
               SELECT datetime(ts, 'unixepoch', 'localtime'),                           'zone_a',                   zone_a         FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
@@ -110,11 +111,11 @@ plugins:
               UNION ALL
               SELECT datetime(ts, 'unixepoch', 'localtime'),                           'clothes_dryer',            clothes_dryer  FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'water_heater',             water_heater   FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'water_heater',             water_heater * 2 FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
               SELECT datetime(ts, 'unixepoch', 'localtime'),                           'dishwasher',               dishwasher     FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
               UNION ALL
-              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'stovetop',                 stovetop       FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
+              SELECT datetime(ts, 'unixepoch', 'localtime'),                           'stovetop',                 stovetop * 2   FROM iotawatt_readings WHERE ts >= CAST(strftime('%s', :day, 'utc') AS INTEGER) AND ts < CAST(strftime('%s', :day, '+1 day', 'utc') AS INTEGER)
             ) ORDER BY time, channel
           library: vega-lite
           display:

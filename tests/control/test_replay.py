@@ -31,9 +31,10 @@ def test_tank_reheats_after_hysteresis():
 
 def test_pv_policy_moves_heating_into_sunny_hours():
     # Two days: water used in the evening, reheated next day from PV
-    runs = [day(3000, range(10, 15)) + [
+    # 4 kW export: enough for a 2950 W heater plus margin
+    runs = [day(4000, range(10, 15)) + [
         Minute(m.ts + 86400, datetime.fromtimestamp(m.ts + 86400, replay.TZ), m.g0, m.demand, 0.25, 0.1)
-        for m in day(3000, range(10, 15))]]
+        for m in day(4000, range(10, 15))]]
     always = replay.replay(Policy("always", pv=False, backup_at=None), runs, {})
     pv = replay.replay(Policy("pv", backup_at=16, full_since_hour=10), runs, {})
     assert pv.heater_kwh == pytest.approx(always.heater_kwh, abs=0.1)   # same hot water

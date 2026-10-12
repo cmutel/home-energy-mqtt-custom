@@ -77,7 +77,15 @@ scikit-learn (and possibly LightGBM) for forecasting, in the `ml` extra.
 ### 2b. Energy and costs (code done 2026-10-12)
 
 - [x] Upstairs consumption = whole house (MBMD) - downstairs panel (IoTaWatt);
-      upstairs water heater estimated from 1498 W steps.
+      upstairs water heater estimated from 2950 W steps.
+- [x] 2026-10-12: water heater, oven and stovetop are two-phase loads with a CT
+      on one leg; the other leg is on the unmeasured third phase, so they draw
+      twice their channel (house rises 1.97× the water heater channel over 888
+      switch-ons, 1.98× the oven's). Both water heaters are ~2950 W, not 1498 W;
+      the old 1498 W upstairs detection mostly found the downstairs heater's
+      hidden leg. Since 2026-04: upstairs other 14.4 → 10.3 kWh/day, downstairs
+      water 4.0 → 8.1 kWh/day. The upstairs water estimate finds ~81% of the
+      energy when tried on the downstairs heater, so it runs ~20% low.
 - [x] High/low tariff prices for import and export; hourly energy and cost table.
 - [x] InfluxDB history import (MBMD since 2024-11); dashboards: upstairs in
       daily consumption, new energy & costs page.
@@ -98,10 +106,11 @@ Facts:
   the fan. Each can be disabled by hand (playroom north is, for now), so a
   heater that draws nothing when switched on is skipped. The rooms heated
   by wood aren't on controlled circuits.
-- Water heaters: 325 l at ~50 °C, so ~14 kWh of heat each. Downstairs use
-  (measured, 484 days): 4.5 kWh/day on average, 2.6-7.1 for 80% of days,
-  13.3 at most; ~6 kWh/day in Nov-Jan, ~3 in July. Upstairs (estimated):
-  ~3.4 kWh/day. 45% of reheating happens 19:00-24:00; smaller peaks at 07:00
+- Water heaters: 325 l at ~50 °C, so ~14 kWh of heat each; ~2950 W each, on
+  two phases. Downstairs use (measured, 484 days, corrected for the second
+  leg): 9 kWh/day on average, 5.1-14.2 for 80% of days, 26.6 at most;
+  ~12 kWh/day in Nov-Jan, ~6 in July. Upstairs (estimated, ~20% low):
+  ~2.2 kWh/day. 45% of reheating happens 19:00-24:00; smaller peaks at 07:00
   on weekdays and spread over the day at weekends. A full tank covers ~3
   average days, and the evening peak comes after the PV hours.
 - Low tariff is 0.2511 vs 0.2727 CHF/kWh high tariff in 2026; the same in 2027.
@@ -141,12 +150,16 @@ Findings (2025-10 to 2026-10):
 - Baseline: today's behaviour (water heaters always on, no PV room heating).
 
 Water heater results (`dorfsteig-control replay`, 83 complete days
-2026-04 to 2026-10; whatever data allows): PV share of water heating 25% →
-68%, saving ~CHF 42 (~0.50/day) with 2026 prices and ~CHF 41 with 2027
-prices; ~14 relay switches per day for both tanks; largest deficit 5.4 kWh
-of ~10 usable; never cold. Backup time hardly matters (14:00-18:00 within
-CHF 1); a 02:00 low-tariff backup is the worst option even with 2026 prices,
-because a tank refilled at night has less room for PV. Skipping the night
+2026-04 to 2026-10; redone 2026-10-12 with the real 2950 W heaters and
+twice the measured downstairs use): PV share of water heating 25% → 65%,
+saving ~CHF 56 (~0.68/day) with 2026 prices; ~13 relay switches per day for
+both tanks. But the largest deficit is now 10.6 kWh of ~10 usable: ~360
+minutes "cold" over the 83 days (never with always-on), so the backup rule
+needs work before pv mode goes live (e.g. also heat in the evening when the
+tank hasn't been full since the backup). Backup time hardly matters
+(14:00-18:00 within CHF 1.5); a 02:00 low-tariff backup is the worst option
+even with 2026 prices, because a tank refilled at night has less room for PV.
+(The first run, with 1498 W heaters, gave 25% → 68%, CHF 42 and never cold.) Skipping the night
 backup on sunny forecasts changes nothing, so forecasts aren't needed for
 the water heaters. Missing: winter, and most of autumn/spring, as IoTaWatt
 history only overlaps the grid history from 2026-04.

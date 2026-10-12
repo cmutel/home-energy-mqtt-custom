@@ -5,21 +5,23 @@ MBMD measures the whole house at the grid connection, so:
 
     house      = PV - grid          (grid is positive when exporting)
     downstairs = mains A + B + zone C + clothes washer
+                 + water heater + oven + stovetop (their second leg)
     upstairs   = house - downstairs
 
 The supply is three-phase but the downstairs mains CTs only cover two
-phases: when zone C or the washer runs, mains doesn't change. Both have their
-own CTs, so they're added; anything else on the third phase without a CT
-can't be seen and ends up in upstairs.
+phases. Zone C and the washer are on the third phase with their own CTs, so
+they're added. The water heater, oven and stovetop are two-phase loads with
+a CT on one leg; their other leg is on the third phase and draws the same,
+so it's added once more (see dorfsteig_core.iotawatt). Anything else on the
+third phase without a CT can't be seen and ends up in upstairs.
 
-The upstairs water heater (1498 W, same model as the downstairs one) isn't
+The upstairs water heater (2950 W, same model as the downstairs one) isn't
 measured. It switches by its own thermostat, so it's found from steps of
-about ±1498 W in the upstairs signal: on after a step up, off after a step
+about ±2950 W in the upstairs signal: on after a step up, off after a step
 down or when upstairs power drops below what the heater alone draws. Runs
-shorter than 6 minutes (a kettle, a hair dryer) are dropped and runs are cut
-after 4 hours; real heating runs were 9-224 minutes. Tested on the
-downstairs heater, which IoTaWatt does measure: total energy within 1%,
-daily totals typically within 0.4 kWh.
+shorter than 6 minutes are dropped and runs are cut after 4 hours.
+(Until 2026-10-12 it looked for 1498 W steps, and mostly found the
+downstairs heater's unmeasured second leg instead.)
 
 Results go to house_minutes and energy_hourly (schema in dorfsteig_core.db).
 Both can be recomputed at any time from the raw tables.
@@ -31,14 +33,14 @@ import time
 from datetime import datetime, timezone
 
 from dorfsteig_core.db import DERIVED_TABLES, init_db
-from dorfsteig_core.iotawatt import OFF_MAINS_CHANNELS
+from dorfsteig_core.iotawatt import WATER_HEATER_W, downstairs_sql
 from dorfsteig_core.tariff import TZ, is_high_tariff, prices_for
 
 log = logging.getLogger(__name__)
 
-UPSTAIRS_WATER_W = 1498.0
-DOWNSTAIRS = "mains_a + mains_b + " + " + ".join(f"IFNULL({c}, 0)" for c in OFF_MAINS_CHANNELS)
-STEP_TOL_W = 200.0
+UPSTAIRS_WATER_W = WATER_HEATER_W
+DOWNSTAIRS = downstairs_sql()
+STEP_TOL_W = 300.0
 MIN_RUN = 6          # minutes
 MAX_RUN = 240        # minutes
 PV_FILL = 5          # minutes: use the nearest PV reading this close if one is missing
@@ -205,7 +207,7 @@ def compute_hours(conn: sqlite3.Connection, start: int, end: int) -> int:
             house_wh = pv_wh + import_wh - export_wh
 
         downstairs_wh = _mean_wh([d for d, _ in iota])
-        downstairs_water_wh = _mean_wh([w or 0 for _, w in iota])
+        downstairs_water_wh = _mean_wh([2 * (w or 0) for _, w in iota])   # two-phase: twice the channel
         upstairs_wh = upstairs_water_wh = upstairs_other_wh = None
         if house_wh is not None and downstairs_wh is not None:
             upstairs_wh = house_wh - downstairs_wh

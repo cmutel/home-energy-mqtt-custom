@@ -110,8 +110,11 @@ of tomorrow's forecast PV.
 
 The house has two breaker panels; IoTaWatt only measures the downstairs one.
 MBMD measures the whole house at the grid connection, so `upstairs = (PV -
-grid) - (mains A + B)`. The upstairs water heater (1498 W) is estimated from
-switching steps in that signal. `dorfsteig_ingest.energy` writes the results
+grid) - downstairs`, where downstairs = mains A + B + the third-phase
+channels (zone C, washer) + the second leg of the two-phase water heater,
+oven and stovetop, which draw twice their channel (see
+`dorfsteig_core/iotawatt.py`). The upstairs water heater (2950 W) is
+estimated from switching steps in that signal. `dorfsteig_ingest.energy` writes the results
 to `house_minutes` and, with high/low tariff prices from
 `dorfsteig_core/tariff.py`, to `energy_hourly`. Add next year's prices there.
 

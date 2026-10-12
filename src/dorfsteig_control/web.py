@@ -29,6 +29,7 @@ from dorfsteig_control.service import Controller
 from dorfsteig_control.sources import data_sources
 from dorfsteig_control.sparkline import sparkline, stacked
 from dorfsteig_control.summary import day_summary, heating_power
+from dorfsteig_core.iotawatt import WATER_HEATER_W
 from dorfsteig_core.settings import settings
 
 HERE = Path(__file__).parent
@@ -268,7 +269,8 @@ def create_app(controller: Controller) -> FastAPI:
                     outdoor=(controller.outdoor_mean, controller.outdoor_source),
                     room_skip={h: t for h, t in controller.room_skip.items() if t > time.time()},
                     night_params=controller.config.night, night=night_context(now),
-                    outlook=pv_outlook(now), fitted=forecasts.fitted_heating(controller.store.conn))
+                    outlook=pv_outlook(now), fitted=forecasts.fitted_heating(controller.store.conn),
+                    heater_w=WATER_HEATER_W)
 
     @app.post(f"{PREFIX}/solar/night")
     async def night_save(

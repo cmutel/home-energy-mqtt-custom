@@ -33,10 +33,35 @@ CHANNELS = {
 }
 COLUMNS = list(CHANNELS)
 
-# The downstairs panel = the two mains CTs + the channels on the third phase,
-# which has no mains CT. Everything else the house uses counts as upstairs.
+# The downstairs panel. The house has three phases, but the mains CTs only
+# cover two of them, so the downstairs panel is put together from:
+# - the two mains CTs;
+# - channels on the third phase, which has no mains CT;
+# - the other leg of two-phase (400 V) loads, whose CT is on one leg only. Their
+#   second leg is on the third phase and draws the same, so their real power is
+#   twice the channel. Measured from switching steps, 2026-04 to 2026-10: the
+#   whole house rises by 1.97× the water heater channel (888 switch-ons) and 1.98×
+#   the oven's (118); the stovetop was tested by hand.
+# Whatever the house uses beyond this counts as upstairs.
 MAINS_CHANNELS = ("mains_a", "mains_b")
 OFF_MAINS_CHANNELS = ("zone_c", "clothes_washer")
+TWO_PHASE_CHANNELS = ("water_heater", "oven", "stovetop")
+
+# Both water heaters (same model): 2 × 1479 W downstairs channel, 2931 W steps upstairs
+WATER_HEATER_W = 2950.0
+
+
+def real_power(column: str, value: float | None) -> float | None:
+    """A channel's value as the circuit's real power (two-phase loads count twice)."""
+    if value is None:
+        return None
+    return 2 * value if column in TWO_PHASE_CHANNELS else value
+
+
+def downstairs_sql() -> str:
+    """SQL expression for the downstairs panel's power from an iotawatt_readings row."""
+    extra = [f"IFNULL({c}, 0)" for c in OFF_MAINS_CHANNELS + TWO_PHASE_CHANNELS]
+    return " + ".join(["mains_a", "mains_b", *extra])
 SELECT = "[time.utc.unix," + ",".join(CHANNELS.values()) + "]"
 
 

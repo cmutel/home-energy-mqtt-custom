@@ -22,10 +22,11 @@ def add_hour(conn, ts: int, high: bool):
         "VALUES (?, 1000, 900, 400, 1500, 1200, 600, 300, 0, 300, ?, ?, ?, ?, ?, 60, 60)",
         (ts, int(high), price, export_price, 0.9 * price, 0.4 * export_price),
     )
-    # Downstairs: mains 1000 W (water heater 600 W, zone A 300 W) + washer 200 W on the third phase
+    # Downstairs 1200 W: mains 700 W (one leg of the water heater 300 W, zone A 300 W, other 100 W)
+    # + washer 200 W on the third phase + the water heater's other leg 300 W
     conn.executemany(
         "INSERT INTO iotawatt_readings (ts, mains_a, mains_b, water_heater, zone_a, clothes_washer) "
-        "VALUES (?, 1000, 0, 600, 300, 200)", [(ts + m * 60,) for m in range(60)],
+        "VALUES (?, 700, 0, 300, 300, 200)", [(ts + m * 60,) for m in range(60)],
     )
 
 

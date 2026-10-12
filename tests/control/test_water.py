@@ -64,16 +64,16 @@ def test_surplus_switches_tanks_on_in_order_with_settle_time():
     long_ago = NOON - timedelta(hours=2)
     for h in (DOWN, UP):
         states[h] = HeaterState(on=False, since=long_ago.timestamp())
-    new, events = run(states, config(), NOON, export=2000, full=full_at(NOON))
+    new, events = run(states, config(), NOON, export=3200, full=full_at(NOON))   # heater 2950 W + margin
     assert [(e.heater, e.on, e.reason) for e in events] == [(DOWN, True, "water pv")]
     # 30 s later: still settling, nothing else switches
-    _, events = run(new, config(), NOON + timedelta(seconds=30), export=2000, full=full_at(NOON))
+    _, events = run(new, config(), NOON + timedelta(seconds=30), export=3200, full=full_at(NOON))
     assert events == []
     # After settling, if the export is still there (tank full), the next tank goes on
-    new, events = run(new, config(), NOON + timedelta(seconds=90), export=2000, full=full_at(NOON))
+    new, events = run(new, config(), NOON + timedelta(seconds=90), export=3200, full=full_at(NOON))
     assert [(e.heater, e.on) for e in events] == [(UP, True)]
     # Room heaters only after that switch has settled too
-    _, events = run(new, config(), NOON + timedelta(seconds=180), export=2000, full=full_at(NOON))
+    _, events = run(new, config(), NOON + timedelta(seconds=180), export=3200, full=full_at(NOON))
     assert [e.heater for e in events] == ["corridor_1st_floor"]
 
 

@@ -21,7 +21,7 @@ In "pv" mode, per tick, for each tank in `water.heaters` order:
 
 "Full" = relay on for `full_after_s` without the heater drawing: measured
 by IoTaWatt downstairs, estimated upstairs (house_minutes). Replayed on
-2026-04 to 2026-10 data, this moves water heating from 25% to 68% PV.
+2026-04 to 2026-10 data (see replay.py for the current numbers).
 """
 
 import sqlite3
@@ -30,13 +30,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from dorfsteig_control.config import WaterParams
+from dorfsteig_core.iotawatt import WATER_HEATER_W
 
-HEATER_W = 1498.0
+HEATER_W = WATER_HEATER_W   # each tank, across two phases
 DRAW_THRESHOLD_W = 100
 
-# Where each tank's draw comes from, as (table, column)
+# Where each tank's draw comes from, as (table, SQL expression for its power in W).
+# Downstairs the CT is on one of the heater's two legs, so it's twice the channel.
 DRAW_SOURCES = {
-    "downstairs_water": ("iotawatt_readings", "water_heater"),
+    "downstairs_water": ("iotawatt_readings", "water_heater * 2"),
     "upstairs_water": ("house_minutes", "upstairs_water"),
 }
 
@@ -116,10 +118,10 @@ def detect_full(conn: sqlite3.Connection, heater: str, on_since: float, full_aft
     Uses the newest minutes available (IoTaWatt and house_minutes arrive a
     few minutes late). Returns None if that can't be seen yet.
     """
-    table, column = DRAW_SOURCES[heater]
+    table, power = DRAW_SOURCES[heater]
     try:
         rows = conn.execute(
-            f"SELECT ts, {column} FROM {table} WHERE ts >= ? AND {column} IS NOT NULL ORDER BY ts",
+            f"SELECT ts, {power} FROM {table} WHERE ts >= ? AND {power} IS NOT NULL ORDER BY ts",
             (on_since + 60,),   # skip the minute the relay switched in
         ).fetchall()
     except sqlite3.OperationalError:

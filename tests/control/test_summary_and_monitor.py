@@ -109,13 +109,14 @@ def test_sensor_offline_alert_and_recovery(tmp_path: Path):
 
 def test_water_heater_energy_is_measured_not_on_time(tmp_path: Path):
     store = Store(init_db(tmp_path / "t.sqlite"))
-    # Downstairs water heater relay on all day, but it only drew 1500 W for one hour
+    # Downstairs water heater relay on all day, but it only drew for one hour: 1500 W on the
+    # channel, which measures one of its two legs, so 3 kW
     store.log_events([Event(ts(0, day=7), "downstairs_water", True, "schedule", None)])
     store.conn.executemany("INSERT INTO iotawatt_readings (ts, water_heater) VALUES (?, ?)",
                            [(ts(6) + 60 * i, 1500.0 if i < 60 else 0.0) for i in range(120)])
     summary = day_summary(store.conn, datetime(2026, 1, 8, 16))
     day = summary.heaters["downstairs_water"]
-    assert day.hours == 16 and day.kwh == 1.5
+    assert day.hours == 16 and day.kwh == 3.0
 
 
 def test_heater_without_load_counts_zero(tmp_path: Path):
@@ -148,4 +149,4 @@ def test_heating_power_split(tmp_path: Path):
                            [(ts(10) + 60 * i, 1500.0) for i in range(5)])
     space, water = heating_power(store.conn, ts(10), ts(10, 10))
     assert space[ts(10)] == 2000 and len(space) == 10
-    assert water == {ts(10) + 60 * i: 1500.0 for i in range(5)}
+    assert water == {ts(10) + 60 * i: 3000.0 for i in range(5)}   # two legs: twice the channel

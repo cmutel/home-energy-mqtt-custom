@@ -44,9 +44,13 @@
       .filter(group => group.title !== 'Supply')
       .flatMap(group => Object.keys(group.circuits).map(name => ({ name, group: group.title })));
 
-    // The upstairs panel isn't measured: upstairs = whole house (MBMD) - downstairs panel
-    // (IoTaWatt), and its water heater is estimated from switching steps (see energy.py).
+    // How to read each line. Two-phase loads draw twice their channel. The upstairs panel
+    // isn't measured: upstairs = whole house (MBMD) - downstairs panel (IoTaWatt), and its
+    // water heater is estimated from switching steps (see energy.py).
     const SQL = {
+      water_heater: 'i.water_heater * 2',
+      oven: 'i.oven * 2',
+      stovetop: 'i.stovetop * 2',
       upstairs_water: 'h.upstairs_water',
       upstairs_other: 'h.upstairs_other',
     };
