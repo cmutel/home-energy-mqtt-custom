@@ -44,9 +44,13 @@
       .filter(group => group.title !== 'Supply')
       .flatMap(group => Object.keys(group.circuits).map(name => ({ name, group: group.title })));
 
+    // Not a column: worked out from the relays below (splitUpstairs)
+    const DERIVED = new Set(['upstairs_heating']);
+
     // How to read each line. Two-phase loads draw twice their channel. The upstairs panel
     // isn't measured: upstairs = whole house (MBMD) - downstairs panel (IoTaWatt), and its
-    // water heater is estimated from switching steps (see energy.py).
+    // water heater is estimated from switching steps (see energy.py). Its room heaters are
+    // estimated from the relays and taken out of "upstairs other" (splitUpstairs).
     const SQL = {
       water_heater: 'i.water_heater * 2',
       oven: 'i.oven * 2',
@@ -58,23 +62,97 @@
     const dayInput = document.getElementById('day');
     const status   = document.getElementById('status');
 
+    async function query(sql) {
+      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
+      const resp = await fetch(url);
+      return resp.json();
+    }
+
+    // The upstairs room heaters aren't measured, so "upstairs other" includes them. Their
+    // share is estimated from the controller's relay switches (control_events) × each
+    // heater's estimated power (the heating UI's /heating/api/status, today's estimate also
+    // for past days), and never more than upstairs used in that minute. A heater whose last
+    // wattage test found no load (switched off by hand) counts as 0. That's an upper bound:
+    // a storage heater with a full core draws nothing although its relay is on.
+    async function upstairsHeaters() {
+      const resp = await fetch('/heating/api/status');
+      const s = await resp.json();
+      return s.heaters
+        .filter(h => h.board === 'upstairs' && !h.water)
+        .map(h => ({ id: h.id, watts: h.no_load ? 0 : h.watts }));
+    }
+
+    // heater → [[on, off], ...] in Unix seconds, within start–end. null if the controller
+    // has no switches for these heaters up to `end` (before it ran, 2026-10-11).
+    async function relaySpans(heaters, start, end) {
+      const ids = heaters.map(h => `'${h.id}'`).join(', ');
+      const events = await query(`
+        SELECT heater, ts, is_on FROM control_events e
+        WHERE dry_run = 0 AND heater IN (${ids}) AND ts < ${end}
+        AND ts >= (SELECT COALESCE(MAX(ts), 0) FROM control_events p
+                   WHERE p.heater = e.heater AND p.dry_run = 0 AND p.ts < ${start})
+        ORDER BY ts`);
+      if (!events.length) return null;
+      const spans = {};
+      const onSince = {};
+      for (const { heater, ts, is_on } of events) {
+        spans[heater] ??= [];
+        if (is_on && onSince[heater] == null) {
+          onSince[heater] = Math.max(ts, start);
+        } else if (!is_on && onSince[heater] != null) {
+          spans[heater].push([onSince[heater], ts]);
+          onSince[heater] = null;
+        }
+      }
+      for (const [heater, since] of Object.entries(onSince)) {
+        if (since != null) spans[heater].push([since, end]);
+      }
+      return spans;
+    }
+
+    // Adds upstairs_heating to each row and takes it out of upstairs_other.
+    // Returns false if it can't be estimated (then upstairs_other is left as it is).
+    async function splitUpstairs(rows, start, end) {
+      let heaters, spans;
+      try {
+        heaters = await upstairsHeaters();
+        spans = await relaySpans(heaters, start, end);
+      } catch (e) {
+        return false;
+      }
+      if (!spans) return false;
+      for (const r of rows) {
+        let relays = 0;
+        for (const h of heaters) {
+          if ((spans[h.id] || []).some(([on, off]) => on <= r.ts && r.ts < off)) relays += h.watts;
+        }
+        if (r.upstairs_other == null) {
+          r.upstairs_heating = null;
+        } else {
+          r.upstairs_heating = Math.min(relays, Math.max(r.upstairs_other, 0));
+          r.upstairs_other -= r.upstairs_heating;
+        }
+      }
+      return true;
+    }
+
     async function load(day) {
       status.textContent = 'Loading…';
-      const cols = CHANNELS.map(c => `${SQL[c.name] ?? 'i.' + c.name} AS ${c.name}`).join(', ');
+      const cols = CHANNELS
+        .filter(c => !DERIVED.has(c.name))
+        .map(c => `${SQL[c.name] ?? 'i.' + c.name} AS ${c.name}`).join(', ');
       const sql = `
-        SELECT datetime(i.ts, 'unixepoch', 'localtime') AS time, ${cols}
+        SELECT i.ts AS ts, datetime(i.ts, 'unixepoch', 'localtime') AS time, ${cols}
         FROM iotawatt_readings i
         LEFT JOIN house_minutes h ON h.ts = i.ts
         WHERE i.ts >= CAST(strftime('%s', '${day}', 'utc') AS INTEGER)
         AND i.ts < CAST(strftime('%s', '${day}', '+1 day', 'utc') AS INTEGER)
         ORDER BY i.ts
       `;
-      const url = `${API}/dorfsteig.json?sql=${encodeURIComponent(sql)}&_shape=array`;
 
       let rows;
       try {
-        const resp = await fetch(url);
-        rows = await resp.json();
+        rows = await query(sql);
       } catch (e) {
         status.textContent = `Error: ${e.message}`;
         return;
@@ -88,10 +166,14 @@
       }
 
       const times = rows.map(r => r.time);
+      const start = new Date(day + 'T00:00:00').getTime() / 1000;
+      const end = new Date(day + 'T00:00:00');
+      end.setDate(end.getDate() + 1);
+      const split = await splitUpstairs(rows, start, end.getTime() / 1000);
 
       const HIDDEN_BY_DEFAULT = new Set(['mains_a', 'mains_b']);
 
-      const traces = CHANNELS.map(({ name, group }) => ({
+      const traces = CHANNELS.filter(c => split || !DERIVED.has(c.name)).map(({ name, group }) => ({
         x: times,
         y: rows.map(r => r[name]),
         name: circuitLabel(name),
@@ -113,22 +195,28 @@
         height: 580,
       });
 
-      renderTotals(rows);
-      status.textContent = `${rows.length} readings`;
+      renderTotals(rows, split);
+      status.textContent = `${rows.length} readings` +
+        (split ? '' : ' · upstairs heating not split out (no relay data for this day)');
     }
 
     // Sum watts over all one-minute readings → Wh (÷60), display as kWh
     const TOTALS = [
       { label: 'Zones A–F', fields: ['zone_a', 'zone_b', 'zone_c', 'zone_d', 'zone_e', 'zone_f'] },
-      ...['water_heater', 'upstairs_water', 'upstairs_other', 'clothes_dryer', 'oven', 'clothes_washer',
-          'dishwasher', 'stovetop'].map(name => ({ label: circuitLabel(name), fields: [name] })),
+      ...['water_heater', 'upstairs_water', 'upstairs_heating', 'upstairs_other', 'clothes_dryer', 'oven',
+          'clothes_washer', 'dishwasher', 'stovetop'].map(name => ({ label: circuitLabel(name), fields: [name] })),
     ];
+    const BAR_COLOUR = '#4c78a8';
+    const HEATING_COLOUR = '#f58518';   // as space heating in the heating UI
 
-    function renderTotals(rows) {
-      const entries = TOTALS.map(({ label, fields }) => {
-        const wh = rows.reduce((sum, r) => sum + fields.reduce((s, f) => s + (r[f] || 0), 0), 0) / 60;
-        return { label, kwh: wh / 1000 };
-      }).sort((a, b) => b.kwh - a.kwh);
+    function renderTotals(rows, split) {
+      const entries = TOTALS
+        .filter(({ fields }) => split || !fields.some(f => DERIVED.has(f)))
+        .map(({ label, fields }) => {
+          const wh = rows.reduce((sum, r) => sum + fields.reduce((s, f) => s + (r[f] || 0), 0), 0) / 60;
+          return { label, kwh: wh / 1000, heating: fields.includes('upstairs_heating') };
+        })
+        .sort((a, b) => b.kwh - a.kwh);
 
       Plotly.react('totals', [{
         type: 'bar',
@@ -138,7 +226,7 @@
         text: entries.map(e => `${e.kwh.toFixed(2)} kWh`),
         textposition: 'outside',
         hovertemplate: '%{x:.3f} kWh<extra>%{y}</extra>',
-        marker: { color: '#4c78a8' },
+        marker: { color: entries.map(e => e.heating ? HEATING_COLOUR : BAR_COLOUR) },
       }], {
         xaxis: { title: 'kWh', rangemode: 'tozero' },
         margin: { t: 20, r: 100, b: 50, l: 250 },

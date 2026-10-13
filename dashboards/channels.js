@@ -27,6 +27,7 @@ const CIRCUIT_GROUPS = [
       clothes_dryer: 'Dryer' } },
   { title: 'Upstairs (house − downstairs)', circuits: {
       upstairs_water: 'Water heater upstairs (estimated)',
+      upstairs_heating: 'Upstairs room heaters (estimated)',
       upstairs_other: 'Upstairs other' } },
   { title: 'Supply', circuits: {
       input_0: 'Voltage' } },

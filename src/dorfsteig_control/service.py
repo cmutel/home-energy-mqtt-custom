@@ -443,8 +443,9 @@ class Controller:
                         "mode": self.config.solar.mode},
             "budgets": {h: {**asdict(b), "share": b.share} for h, b in (self.fit_budgets or {}).items()},
             "heaters": [
-                {"id": h.id, "name": h.name, **asdict(self.states[h.id]),
-                 "watts": wattage.estimated_watts(self.store.conn, h.id)[0]}
+                {"id": h.id, "name": h.name, "board": h.board, "water": h.water, **asdict(self.states[h.id]),
+                 "watts": wattage.estimated_watts(self.store.conn, h.id)[0],
+                 "no_load": wattage.no_load(self.store.conn, h.id)}
                 for h in HEATERS
             ],
             "boards": self.board_polls,
