@@ -122,9 +122,15 @@
       }
       if (!spans) return false;
       for (const r of rows) {
+        // Each row is the average of the minute from r.ts: a heater switched during the
+        // minute counts for the part of it that its relay was closed
         let relays = 0;
         for (const h of heaters) {
-          if ((spans[h.id] || []).some(([on, off]) => on <= r.ts && r.ts < off)) relays += h.watts;
+          let onSeconds = 0;
+          for (const [on, off] of spans[h.id] || []) {
+            onSeconds += Math.max(0, Math.min(off, r.ts + 60) - Math.max(on, r.ts));
+          }
+          relays += h.watts * onSeconds / 60;
         }
         if (r.upstairs_other == null) {
           r.upstairs_heating = null;
