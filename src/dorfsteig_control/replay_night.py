@@ -7,8 +7,8 @@ PV is exported for ~0.09 CHF/kWh instead of saving ~0.25.
 
 Model, per day D with a forecast made the evening before:
 
-- Heat needed: kwh_per_degree × max(0, limit - D's measured mean temperature).
-  The same rule the plan uses, but with the real temperature.
+- Heat needed: the zones' budgets (budget.py) for D's measured mean
+  temperature. The same rule the plan uses, but with the real temperature.
 - PV the heaters could have taken on D: minute by minute, the heaters that
   fit into the recorded export minus the margin (in priority order, with
   their measured watts). This ignores switching delays, so it's a little
@@ -42,6 +42,7 @@ choice is mostly comfort (short kWh) against grid use.
 """
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
@@ -127,24 +128,25 @@ def load_days(conn: sqlite3.Connection, start: date, end: date, heaters: dict[st
     return days
 
 
-def replay_night(name: str, days: list[Day], limit: float, kwh_per_degree: float, min_kwh: float,
+def replay_night(name: str, days: list[Day], need_kwh: Callable[[float], float], min_kwh: float,
                  credit: float | None, perfect: bool = False) -> NightResult:
-    """`credit` None = no night charging at all."""
+    """`need_kwh`: heat needed on a day with this mean temperature.
+    `credit` None = no night charging at all."""
     result = NightResult(name)
     for d in days:
-        need = kwh_per_degree * max(0.0, limit - d.temperature)
+        need = need_kwh(d.temperature)
         if perfect:
             night = max(0.0, need - d.usable_pv_kwh)
         elif credit is None:
             night = 0.0
         else:
-            forecast_need = kwh_per_degree * max(0.0, limit - d.forecast_temperature)
+            forecast_need = need_kwh(d.forecast_temperature)
             night = max(0.0, forecast_need - credit * d.forecast_surplus_kwh)
         if night < min_kwh:
             night = 0.0
 
-        # PV only charges heaters on days below the limit (fit mode's gate), into what's left of the need
-        pv = min(d.usable_pv_kwh, max(0.0, need - night)) if d.temperature < limit else 0.0
+        # PV fills what's left of the need (fit mode stops at the budgets)
+        pv = min(d.usable_pv_kwh, max(0.0, need - night))
         short = max(0.0, need - night - pv)
         excess = max(0.0, night - need)
 
@@ -164,13 +166,11 @@ def replay_night(name: str, days: list[Day], limit: float, kwh_per_degree: float
     return result
 
 
-def run_all(days: list[Day], limit: float, kwh_per_degree: float, min_kwh: float) -> list[NightResult]:
-    results = [replay_night("no night charging", days, limit, kwh_per_degree, min_kwh, credit=None)]
+def run_all(days: list[Day], need_kwh: Callable[[float], float], min_kwh: float) -> list[NightResult]:
+    results = [replay_night("no night charging", days, need_kwh, min_kwh, credit=None)]
     for credit in CREDITS:
-        results.append(replay_night(f"plan, pv_credit {credit}", days, limit, kwh_per_degree, min_kwh,
-                                    credit=credit))
-    results.append(replay_night("perfect foresight", days, limit, kwh_per_degree, min_kwh,
-                                credit=None, perfect=True))
+        results.append(replay_night(f"plan, pv_credit {credit}", days, need_kwh, min_kwh, credit=credit))
+    results.append(replay_night("perfect foresight", days, need_kwh, min_kwh, credit=None, perfect=True))
     return results
 
 

@@ -8,6 +8,7 @@
 - night_plan:     the night plan made each evening (see night.py)
 """
 
+import json
 import sqlite3
 import time
 from datetime import date
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS night_plan (
     heaters      TEXT NOT NULL,     -- comma-separated heater ids
     start        REAL NOT NULL,
     end          REAL NOT NULL,
-    note         TEXT NOT NULL
+    note         TEXT NOT NULL,
+    ends         TEXT               -- JSON, heater → when it stops; NULL = all at `end`
 );
 """
 
@@ -63,7 +65,15 @@ class Store:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         conn.executescript(SCHEMA)
+        self._migrate()
         wattage.init_tables(conn)
+
+    def _migrate(self) -> None:
+        """night_plan got a stop time per heater (2026-10-13)."""
+        columns = [row[1] for row in self.conn.execute("PRAGMA table_info(night_plan)")]
+        if "ends" not in columns:
+            self.conn.execute("ALTER TABLE night_plan ADD COLUMN ends TEXT")
+            self.conn.commit()
 
     # ---- config
 
@@ -112,25 +122,27 @@ class Store:
     def save_night_plan(self, plan: NightPlan) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO night_plan (night, made_at, mode, temperature, need_kwh, surplus_kwh, "
-            "grid_kwh, heaters, start, end, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "grid_kwh, heaters, start, end, note, ends) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (plan.night.isoformat(), plan.made_at, plan.mode, plan.temperature, plan.need_kwh,
-             plan.surplus_kwh, plan.grid_kwh, ",".join(plan.heaters), plan.start, plan.end, plan.note),
+             plan.surplus_kwh, plan.grid_kwh, ",".join(plan.heaters), plan.start, plan.end, plan.note,
+             json.dumps(plan.ends)),
         )
         self.conn.commit()
 
     def load_night_plan(self, night: date | None = None) -> NightPlan | None:
         """The plan for `night`, or the latest one if None."""
         query = ("SELECT night, made_at, mode, temperature, need_kwh, surplus_kwh, grid_kwh, heaters, "
-                 "start, end, note FROM night_plan")
+                 "start, end, note, ends FROM night_plan")
         if night is None:
             row = self.conn.execute(query + " ORDER BY night DESC LIMIT 1").fetchone()
         else:
             row = self.conn.execute(query + " WHERE night = ?", (night.isoformat(),)).fetchone()
         if row is None:
             return None
-        night_text, made_at, mode, temperature, need, surplus, grid, heaters, start, end, note = row
+        night_text, made_at, mode, temperature, need, surplus, grid, heaters, start, end, note, ends = row
         return NightPlan(date.fromisoformat(night_text), made_at, mode, temperature, need, surplus, grid,
-                         heaters.split(",") if heaters else [], start, end, note)
+                         heaters.split(",") if heaters else [], start, end, note,
+                         json.loads(ends) if ends else {})
 
     # ---- events
 

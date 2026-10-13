@@ -1,5 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Solar{% endblock %}
+{% block title %}Solar
+<details>
+  <summary>More settings</summary>
+  {% for section, title in [("solar", "Room heaters, fit mode"), ("water", "Water heaters, PV mode")] %}
+  {% set params = solar if section == "solar" else water %}
+  <h3>{{ title }}</h3>
+  <form method="post" action="{{ prefix }}/solar/settings/{{ section }}">
+    <div class="grid">{% for name, label in settings_fields[section] %}
+      <label>{{ label }}<input type="number" name="{{ name }}" value="{{ params[name] }}" step="any"></label>
+      {% if loop.index is divisibleby 2 and not loop.last %}</div><div class="grid">{% endif %}{% endfor %}
+    </div>
+    <button {% if locked %}disabled{% endif %}>Save</button>
+  </form>
+  {% endfor %}
+</details>
+{% endblock %}
 {% block content %}
 <h2>Water heaters</h2>
 <p class="muted">PV mode: water heaters get PV surplus first (on above {{ (heater_w + water.on_margin_w) | int }} W export,
@@ -27,23 +42,22 @@ boosts still work. Shadow mode only logs what PV mode would do (History, dry run
 <small class="muted">(relay on for {{ (water.full_after_s / 60) | int }} min without drawing; upstairs is estimated)</small></p>
 
 <h2>PV surplus switching (room heaters)</h2>
-<p class="muted"><strong>Fit:</strong> only while today's mean outdoor temperature is below the limit. Once the water heaters are served,
-the highest-priority heater that fits the export minus {{ solar.margin_w | int }} W goes on, one per minute; a heater that then draws
-nothing (switched off by hand, or core full) is skipped for {{ (solar.no_load_skip_s / 60) | int }} min. Above {{ solar.fit_off_import_w | int }} W
-import the lowest-priority one goes off after at least {{ (solar.min_on_s / 60) | int }} min, above {{ solar.fast_shed_w | int }} W at once.
-<strong>Legacy:</strong> above the export threshold the next heater in the list goes on, below the import threshold the last one goes off.
+<p class="muted"><strong>Fit:</strong> each zone below has a heat budget for the day, from the day's mean outdoor temperature.
+Once the water heaters are served, the heater of the zone furthest behind its budget that fits the export minus {{ solar.margin_w | int }} W
+goes on, one per minute; a zone stops at {{ (solar.max_share * 100) | round | int }}% of its budget. If nothing more fits, a heater on for
+{{ (solar.rotate_after_s / 60) | int }} min makes way for a zone {{ (solar.rotate_gap * 100) | round | int }} points further behind, so the heat goes
+round the zones. A heater that draws nothing when switched on (switched off by hand, or core full) is skipped for
+{{ (solar.no_load_skip_s / 60) | int }} min. Above {{ solar.fit_off_import_w | int }} W import the zone furthest ahead goes off after at least
+{{ (solar.min_on_s / 60) | int }} min, above {{ solar.fast_shed_w | int }} W at once.
+<strong>Legacy:</strong> above the export threshold the next heater in the zone list goes on, below the import threshold the last one goes off.
 <strong>Shadow:</strong> legacy, logging what fit would do (History, dry run). Grid power is positive when exporting.</p>
-<p>Today's mean outdoor temperature: {% if outdoor[0] is none %}<strong>unknown</strong> ({{ outdoor[1] }}){% else %}<strong>{{ "%.1f" | format(outdoor[0]) }} °C</strong>
-<small class="muted">({{ outdoor[1] }})</small>{% endif %}
-{% if room_skip %}· Skipped (drew nothing): {% for h, until in room_skip.items() %}{{ by_id[h].name }} until {{ until | ts("%H:%M") }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
 <form method="post" action="{{ prefix }}/solar">
   <label><input type="checkbox" role="switch" name="enabled" value="true" {% if solar.enabled %}checked{% endif %}> Switch heaters on PV surplus</label>
   <div class="grid">
     <label>Mode<select name="mode">
-      {% for value, label in [("legacy", "Legacy thresholds"), ("shadow", "Shadow: log what fit would do"), ("fit", "Fit to surplus, below the temperature limit")] %}
+      {% for value, label in [("legacy", "Legacy thresholds"), ("shadow", "Shadow: log what fit would do"), ("fit", "Fit to surplus, by zone budget")] %}
       <option value="{{ value }}" {% if solar.mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select></label>
-    <label>Temperature limit (°C, today's mean)<input type="number" name="temp_limit" value="{{ solar.temp_limit }}" step="0.5"></label>
   </div>
   <div class="grid">
     <label>Legacy: add a heater above export of (W)<input type="number" name="export_on_w" value="{{ solar.export_on_w | int }}" step="50"></label>
@@ -56,11 +70,29 @@ import the lowest-priority one goes off after at least {{ (solar.min_on_s / 60) 
   <button {% if locked %}disabled{% endif %}>Save</button>
 </form>
 
-<h3>Priority</h3>
+<h3>Zones</h3>
+<p class="muted">Budget per day = kWh per °C × (heats below − the day's mean outdoor temperature), nothing on warmer days. Give rooms that
+get heat from below (the upper floors) a lower "heats below". The day runs from {{ night_params.charge_from.strftime("%H:%M") }} to
+{{ night_params.charge_from.strftime("%H:%M") }}, so a night charge counts towards the next day; the mean is the station so far plus the
+forecast, and is updated during the day. "Got" is on-time × measured power for everything that switched the heater on
+(PV, night plan, boosts){% if solar.mode == "shadow" %}; in shadow mode, what the shadow would have switched{% endif %}.</p>
+<p>Mean outdoor temperature{% if budget_day %} for {{ budget_day.strftime("%a %d %b") }}{% endif %}:
+{% if outdoor[0] is none %}<strong>unknown</strong> ({{ outdoor[1] }}): no budgets, fit mode switches nothing on{% else %}<strong>{{ "%.1f" | format(outdoor[0]) }} °C</strong>
+<small class="muted">({{ outdoor[1] }})</small>{% endif %}
+{% if room_skip %}· Skipped (drew nothing): {% for h, until in room_skip.items() %}{{ by_id[h].name }} until {{ until | ts("%H:%M") }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+<form id="zones" method="post" action="{{ prefix }}/solar/zones"></form>
 <table>
+  <thead><tr><th></th><th>Zone</th><th>Power</th><th>Heats below (°C)</th><th>kWh per °C</th><th>Night charging</th>
+    <th>Budget</th><th>Got</th><th></th></tr></thead>
   <tbody>
-  {% for h in solar.priority %}
-    <tr><td>{{ loop.index }}</td><td>{{ by_id[h].name }}</td>
+  {% for h in solar.priority %}{% set zone = solar.zones[h] %}{% set b = budgets[h] if budgets else none %}
+    <tr><td>{{ loop.index }}</td><td>{{ by_id[h].name }}</td><td>{{ watts.get(h) | watts }}</td>
+      <td><input type="number" form="zones" name="heats_below.{{ h }}" value="{{ zone.heats_below }}" step="0.5" class="small"></td>
+      <td><input type="number" form="zones" name="kwh_per_degree.{{ h }}" value="{{ zone.kwh_per_degree }}" min="0" step="0.05" class="small"></td>
+      <td><input type="checkbox" form="zones" name="night.{{ h }}" {% if zone.night %}checked{% endif %}></td>
+      <td>{% if b %}{{ "%.1f" | format(b.budget_kwh) }} kWh{% else %}–{% endif %}</td>
+      <td>{% if b %}{{ "%.1f" | format(b.delivered_kwh) }} kWh
+        {% if b.budget_kwh > 0 %}<progress value="{{ [b.share, 1] | min }}" max="1" title="{{ (b.share * 100) | round | int }}%"></progress>{% endif %}{% else %}–{% endif %}</td>
       <td>{% for action, label in [("up", "↑"), ("down", "↓"), ("remove", "remove")] %}
         <form method="post" action="{{ prefix }}/solar/priority" class="inline">
           <input type="hidden" name="heater" value="{{ h }}"><input type="hidden" name="action" value="{{ action }}">
@@ -68,30 +100,36 @@ import the lowest-priority one goes off after at least {{ (solar.min_on_s / 60) 
       {% endfor %}</td></tr>
   {% endfor %}
   </tbody>
+  {% if solar.priority | length > 1 %}
+  <tfoot><tr><td></td><td>All zones</td><td></td><td></td>
+    <td>{{ "%.2f" | format(zones_kwh_per_degree) }}</td><td></td>
+    <td>{% if budgets %}{{ "%.1f" | format(budgets.values() | sum(attribute="budget_kwh")) }} kWh{% endif %}</td>
+    <td>{% if budgets %}{{ "%.1f" | format(budgets.values() | sum(attribute="delivered_kwh")) }} kWh{% endif %}</td><td></td></tr></tfoot>
+  {% endif %}
 </table>
+{% if fitted %}<p class="muted">For comparison, the whole house over the past winters: {{ "%.2f" | format(fitted.kwh_per_degree) }} kWh per °C below
+{{ fitted.below | int }} °C ({{ fitted.days }} days; heating by hand and the wood stove make it scatter by ±{{ fitted.daily_mae_kwh | round | int }} kWh/day).</p>{% endif %}
+<button form="zones" {% if locked %}disabled{% endif %}>Save zones</button>
 <form method="post" action="{{ prefix }}/solar/priority">
   <input type="hidden" name="action" value="add">
   <fieldset role="group">
-    <select name="heater">{% for h in heaters if h.id not in solar.priority %}<option value="{{ h.id }}">{{ h.name }}</option>{% endfor %}</select>
-    <button {% if locked %}disabled{% endif %}>Add to priority</button>
+    <select name="heater">{% for h in heaters if h.id not in solar.priority and not h.water %}<option value="{{ h.id }}">{{ h.name }}</option>{% endfor %}</select>
+    <button {% if locked %}disabled{% endif %}>Add zone</button>
   </fieldset>
 </form>
 
 <h2>Night plan (room heaters from the grid)</h2>
-<p class="muted">For colder days, when PV alone isn't enough. Every evening at the start of the charging window the plan works out
-tomorrow's need: {{ night_params.kwh_per_degree }} kWh for each °C tomorrow's forecast mean is below the temperature limit
-({{ solar.temp_limit }} °C), minus {{ night_params.pv_credit }} × tomorrow's forecast PV surplus (PV beyond the usual house load).
-If that leaves at least {{ night_params.min_kwh }} kWh, the heaters in the priority list above (except those the wattage test found
-switched off) all charge from the start of the window, for as long as that takes. <strong>Shadow:</strong> make and show the plan, log what it
-would switch (History, dry run), switch nothing.</p>
-{% if fitted %}<p>From the history: {{ "%.2f" | format(fitted.kwh_per_degree) }} kWh per °C below {{ fitted.below | int }} °C
-<small class="muted">({{ fitted.days }} days of house use against the station's daily mean; heating by hand and the wood stove make it scatter
-by ±{{ fitted.daily_mae_kwh | round | int }} kWh/day)</small></p>{% endif %}
+<p class="muted">For colder days, when PV alone isn't enough; <strong>off</strong> heats from PV only, and the house gets colder on grey days.
+Every evening at the start of the charging window the plan takes tomorrow's zone budgets (from tomorrow's forecast mean temperature),
+counts {{ night_params.pv_credit }} × tomorrow's forecast PV surplus (PV beyond the usual house load) against them, shared in proportion to the
+budgets, and charges the rest of each zone ticked for night charging, except heaters the wattage test found switched off. If that's less than
+{{ night_params.min_kwh }} kWh in all, nothing is charged. All start at the start of the window, each for as long as its zone needs.
+<strong>Shadow:</strong> make and show the plan, log what it would switch (History, dry run), switch nothing.</p>
 <p>Forecast: {% if outlook.tomorrow %}tomorrow {{ "%.1f" | format(outlook.tomorrow.temperature) }} °C, PV {{ "%.0f" | format(outlook.tomorrow.pv_kwh) }} kWh,
 surplus {{ "%.0f" | format(outlook.tomorrow.surplus_kwh) }} kWh{% else %}<strong>none</strong> (is dorfsteig-forecast running?){% endif %}</p>
 {% if night.plan %}<p>{{ "Tonight" if night.tonight else "Last plan (" ~ night.plan.night.strftime("%a %d %b") ~ ")" }}:
 {% if night.plan.grid_kwh > 0 %}<strong>{{ "%.1f" | format(night.plan.grid_kwh) }} kWh</strong>, {{ night.plan.start | ts("%H:%M") }}–{{ night.plan.end | ts("%H:%M") }},
-{% for h in night.plan.heaters %}{{ by_id[h].name }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<strong>no charging</strong>{% endif %}<br>
+{% for h in night.plan.heaters %}{{ by_id[h].name }} until {{ night.plan.windows()[h][1] | ts("%H:%M") }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<strong>no charging</strong>{% endif %}<br>
 <small class="muted">{{ night.plan.note }}</small></p>{% endif %}
 <form method="post" action="{{ prefix }}/solar/night">
   <div class="grid">
@@ -103,10 +141,24 @@ surplus {{ "%.0f" | format(outlook.tomorrow.surplus_kwh) }} kWh{% else %}<strong
     <label>until at the latest<input type="time" name="charge_until" value="{{ night_params.charge_until.strftime('%H:%M') }}"></label>
   </div>
   <div class="grid">
-    <label>kWh per °C below the limit<input type="number" name="kwh_per_degree" value="{{ night_params.kwh_per_degree }}" min="0" step="0.1"></label>
     <label>Share of PV surplus counted<input type="number" name="pv_credit" value="{{ night_params.pv_credit }}" min="0" max="1" step="0.1"></label>
     <label>Minimum to charge (kWh)<input type="number" name="min_kwh" value="{{ night_params.min_kwh }}" min="0" step="0.5"></label>
   </div>
   <button {% if locked %}disabled{% endif %}>Save</button>
 </form>
+
+<details>
+  <summary>More settings</summary>
+  {% for section, title in [("solar", "Room heaters, fit mode"), ("water", "Water heaters, PV mode")] %}
+  {% set params = solar if section == "solar" else water %}
+  <h3>{{ title }}</h3>
+  <form method="post" action="{{ prefix }}/solar/settings/{{ section }}">
+    <div class="grid">{% for name, label in settings_fields[section] %}
+      <label>{{ label }}<input type="number" name="{{ name }}" value="{{ params[name] }}" step="any"></label>
+      {% if loop.index is divisibleby 2 and not loop.last %}</div><div class="grid">{% endif %}{% endfor %}
+    </div>
+    <button {% if locked %}disabled{% endif %}>Save</button>
+  </form>
+  {% endfor %}
+</details>
 {% endblock %}

@@ -37,6 +37,32 @@ SPARK_HOURS = 6
 SPACE_COLOUR, WATER_COLOUR = "#f58518", "#4c78a8"
 PREFIX = "/heating"
 
+# Fine-tuning shown on the Solar page under "More settings": config section →
+# (field, label). All are numbers; the units are in the labels.
+SETTINGS = {
+    "solar": [
+        ("margin_w", "Export beyond a heater's power needed to switch it on (W)"),
+        ("fit_off_import_w", "Import tolerated before shedding a heater (W)"),
+        ("fast_shed_w", "Import above which a heater is shed at once (W)"),
+        ("min_on_s", "Minimum time on (s)"),
+        ("min_off_s", "Minimum time off (s)"),
+        ("settle_s", "Time between two switch-ons (s)"),
+        ("no_load_w", "A switch-on moving the grid less than this drew nothing (W)"),
+        ("no_load_skip_s", "Skip a heater that drew nothing for (s)"),
+        ("max_share", "Stop a zone at this share of its budget (1 = 100%)"),
+        ("rotate_after_s", "On this long, a heater may make way for another zone (s)"),
+        ("rotate_gap", "… if that zone is this much further behind (0.15 = 15 points)"),
+    ],
+    "water": [
+        ("on_margin_w", "Export beyond the heater's power needed to switch on (W)"),
+        ("off_import_w", "Import tolerated before switching a tank off (W)"),
+        ("min_on_s", "Minimum time on (s)"),
+        ("min_off_s", "Minimum time off (s)"),
+        ("settle_s", "Wait after any switch (s)"),
+        ("full_after_s", "Relay on without drawing this long = tank full (s)"),
+    ],
+}
+
 
 def _fmt_ts(ts: float | None, fmt: str = "%d %b %H:%M") -> str:
     if not ts:
@@ -264,9 +290,12 @@ def create_app(controller: Controller) -> FastAPI:
     @app.get(f"{PREFIX}/solar", response_class=HTMLResponse)
     async def solar(request: Request) -> HTMLResponse:
         now = datetime.now()
-        return page(request, "solar.html", solar=controller.config.solar, water=controller.config.water,
-                    water_full=controller.water_full,
+        params = controller.config.solar
+        return page(request, "solar.html", solar=params, water=controller.config.water,
+                    zones_kwh_per_degree=sum(params.zones[h].kwh_per_degree for h in params.priority),
+                    water_full=controller.water_full, settings_fields=SETTINGS,
                     outdoor=(controller.outdoor_mean, controller.outdoor_source),
+                    budget_day=controller.budget_day, budgets=controller.fit_budgets, watts=controller.watts,
                     room_skip={h: t for h, t in controller.room_skip.items() if t > time.time()},
                     night_params=controller.config.night, night=night_context(now),
                     outlook=pv_outlook(now), fitted=forecasts.fitted_heating(controller.store.conn),
@@ -275,13 +304,12 @@ def create_app(controller: Controller) -> FastAPI:
     @app.post(f"{PREFIX}/solar/night")
     async def night_save(
         mode: str = Form(), charge_from: str = Form(), charge_until: str = Form(),
-        kwh_per_degree: float = Form(), pv_credit: float = Form(), min_kwh: float = Form(),
+        pv_credit: float = Form(), min_kwh: float = Form(),
     ) -> RedirectResponse:
         def change(c: ControlConfig) -> None:
             c.night.mode = mode
             c.night.charge_from = charge_from
             c.night.charge_until = charge_until
-            c.night.kwh_per_degree = kwh_per_degree
             c.night.pv_credit = pv_credit
             c.night.min_kwh = min_kwh
         return edit("/solar", change, "Night plan settings saved")
@@ -302,12 +330,11 @@ def create_app(controller: Controller) -> FastAPI:
     async def solar_save(
         enabled: bool = Form(False), export_on_w: float = Form(), import_off_w: float = Form(),
         min_switch_interval_s: float = Form(), stale_after_s: float = Form(),
-        mode: str = Form("legacy"), temp_limit: float = Form(15.0),
+        mode: str = Form("legacy"),
     ) -> RedirectResponse:
         def change(c: ControlConfig) -> None:
             c.solar.enabled = enabled
             c.solar.mode = mode
-            c.solar.temp_limit = temp_limit
             c.solar.export_on_w = export_on_w
             c.solar.import_off_w = import_off_w
             c.solar.min_switch_interval_s = min_switch_interval_s
@@ -328,6 +355,30 @@ def create_app(controller: Controller) -> FastAPI:
                 if 0 <= j < len(p):
                     p[i], p[j] = p[j], p[i]
         return edit("/solar", change, "Priority updated")
+
+    @app.post(f"{PREFIX}/solar/zones")
+    async def zones_save(request: Request) -> RedirectResponse:
+        """The zone table: fields named <setting>.<heater>, e.g. heats_below.living_room."""
+        form = await request.form()
+
+        def change(c: ControlConfig) -> None:
+            for heater in c.solar.priority:
+                zone = c.solar.zones[heater]
+                zone.heats_below = float(form[f"heats_below.{heater}"])
+                zone.kwh_per_degree = float(form[f"kwh_per_degree.{heater}"])
+                zone.night = f"night.{heater}" in form    # an unticked checkbox isn't sent
+        return edit("/solar", change, "Zones saved")
+
+    @app.post(f"{PREFIX}/solar/settings/{{section}}")
+    async def settings_save(section: str, request: Request) -> RedirectResponse:
+        """The "More settings" forms: every field in SETTINGS[section]."""
+        form = await request.form()
+
+        def change(c: ControlConfig) -> None:
+            params = getattr(c, section)
+            for name, _ in SETTINGS[section]:
+                setattr(params, name, float(form[name]))
+        return edit("/solar", change, "Settings saved")
 
     # ---- notifications
 

@@ -17,13 +17,14 @@ import logging
 import sqlite3
 import time
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import aiomqtt
 import uvicorn
 
 from dorfsteig_control import outdoor, water, wattage
+from dorfsteig_control.budget import Budget, budget_day, day_start, zone_budgets
 from dorfsteig_control.config import ControlConfig, from_legacy
 from dorfsteig_control.engine import GridSample, States, decide
 from dorfsteig_control.heaters import BY_ID, HEATERS
@@ -31,7 +32,7 @@ from dorfsteig_control.night import NightPlan, make_plan, night_of
 from dorfsteig_control.outputs import downstairs_payload, upstairs_payload
 from dorfsteig_control.report import daily_report, format_report
 from dorfsteig_control.store import Store
-from dorfsteig_control.summary import day_summary, format_status, format_summary
+from dorfsteig_control.summary import day_summary, delivered_kwh, format_status, format_summary
 from dorfsteig_core.notify import Notifier
 from dorfsteig_core.settings import settings
 
@@ -97,11 +98,15 @@ class Controller:
         self.water_full = store.load_water_full()
         self.shadow_states: States | None = None
 
-        # Room heaters in fit mode (engine.fit_rooms)
+        # Room heaters in fit mode (engine.fit_rooms): the budget day's mean outdoor
+        # temperature (budget.py), and the zone budgets of the last tick
         self.watts: dict[str, float] = {}
+        self.budget_day: date | None = None
         self.outdoor_mean: float | None = None
         self.outdoor_source = "not checked yet"
         self.outdoor_checked = 0.0
+        self.budgets: dict[str, Budget] | None = None
+        self.shadow_budgets: dict[str, Budget] | None = None   # what the shadow's switches delivered
         self.room_skip: dict[str, float] = {}       # heater → skip until (drew nothing when switched on)
         self.load_checks: list[wattage.PendingSwitch] = []
 
@@ -142,9 +147,10 @@ class Controller:
                           average=sum(recent) / len(recent) if recent else None)
         self.refresh_inputs(now)
         self.update_night_plan(now)
+        self.budgets = self.zone_budgets(now, self.dry_run)
         self.states, events = decide(self.states, self.config, now, grid, overrides=self.overrides,
                                      hold_solar=self.hold_solar, water_full=self.water_full,
-                                     outdoor_mean=self.outdoor_mean, watts=self.watts,
+                                     budgets=self.budgets, watts=self.watts,
                                      room_skip=self.room_skip, night_windows=self.night_windows("on"))
         self.run_shadow(now, grid)
 
@@ -155,7 +161,7 @@ class Controller:
             self.switch_times.append(e.ts)
             if e.reason != "override":
                 self.pending_switches.append(wattage.PendingSwitch(e.ts, e.heater, e.on))
-            if e.on and e.reason == "export" and self.config.solar.mode == "fit":
+            if e.on and e.reason in ("export", "rotate") and self.config.solar.mode == "fit":
                 self.load_checks.append(wattage.PendingSwitch(e.ts, e.heater, e.on))
         if events:
             self.store.log_events(events, dry_run=self.dry_run)
@@ -193,8 +199,10 @@ class Controller:
             "water": water.model_copy(update={"mode": "pv" if water.mode == "shadow" else water.mode}),
             "solar": solar.model_copy(update={"mode": "fit" if solar.mode == "shadow" else solar.mode}),
         })
+        # The shadow's budgets count what its own (dry-run) switches delivered
+        self.shadow_budgets = self.zone_budgets(now, dry_run=True)
         states, events = decide(states, config, now, shifted, overrides=self.overrides,
-                                water_full=self.water_full, outdoor_mean=self.outdoor_mean,
+                                water_full=self.water_full, budgets=self.shadow_budgets,
                                 watts=self.watts, room_skip=self.room_skip, night_windows=night_windows)
         self.shadow_states = states
         events = [e for e in events if e.heater in shadowed]
@@ -204,11 +212,25 @@ class Controller:
             self.store.log_events(events, dry_run=True)
 
     def refresh_inputs(self, now: datetime) -> None:
-        """Slow-changing inputs for the engine: wattages and today's mean outdoor temperature."""
+        """Slow-changing inputs for the engine: wattages and the budget day's mean outdoor temperature.
+
+        The temperature is refreshed every ten minutes, as station hours replace
+        forecast ones, so the budgets follow the day (budget.py).
+        """
         self.watts = {h.id: wattage.estimated_watts(self.store.conn, h.id)[0] for h in HEATERS}
-        if now.timestamp() - self.outdoor_checked > 600:
-            self.outdoor_mean, self.outdoor_source = outdoor.today_mean(self.store.conn, now)
+        day = budget_day(now, self.config.night.charge_from)
+        if day != self.budget_day or now.timestamp() - self.outdoor_checked > 600:
+            self.budget_day = day
+            self.outdoor_mean, self.outdoor_source = outdoor.day_mean(self.store.conn, day, now)
             self.outdoor_checked = now.timestamp()
+
+    def zone_budgets(self, now: datetime, dry_run: bool) -> dict[str, Budget] | None:
+        """Each zone's budget for the budget day, and what it got so far (from real or dry-run switches)."""
+        solar = self.config.solar
+        start = day_start(budget_day(now, self.config.night.charge_from), self.config.night.charge_from)
+        delivered = delivered_kwh(self.store.conn, solar.priority, start.timestamp(), now.timestamp(),
+                                  self.watts, dry_run)
+        return zone_budgets(solar, self.outdoor_mean, delivered)
 
     def update_night_plan(self, now: datetime) -> None:
         """Make the plan once per night, at the start of the charging window (or on the first tick in it)."""
@@ -231,6 +253,11 @@ class Controller:
         if self.night_plan is None or self.config.night.mode != mode:
             return {}
         return self.night_plan.windows()
+
+    @property
+    def fit_budgets(self) -> dict[str, Budget] | None:
+        """The budgets fit mode works with: the shadow's in shadow mode, else the real ones."""
+        return self.shadow_budgets if self.config.solar.mode == "shadow" else self.budgets
 
     def check_room_loads(self, ts: float) -> None:
         """Room heaters switched on in fit mode: did the grid drop? If not, skip them for a while.
@@ -412,7 +439,9 @@ class Controller:
             "pv": {"power": self.pv_power,
                    "age_s": None if self.pv_ts is None else round(now - self.pv_ts, 1)},
             "outdoor": {"mean": self.outdoor_mean, "source": self.outdoor_source,
-                        "limit": self.config.solar.temp_limit, "mode": self.config.solar.mode},
+                        "day": None if self.budget_day is None else self.budget_day.isoformat(),
+                        "mode": self.config.solar.mode},
+            "budgets": {h: {**asdict(b), "share": b.share} for h, b in (self.fit_budgets or {}).items()},
             "heaters": [
                 {"id": h.id, "name": h.name, **asdict(self.states[h.id]),
                  "watts": wattage.estimated_watts(self.store.conn, h.id)[0]}

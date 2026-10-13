@@ -73,6 +73,23 @@ LEGACY_SOLAR_PRIORITY = [
 SolarMode = Literal["legacy", "shadow", "fit"]
 
 
+class Zone(_Model):
+    """A room heater's daily heat budget (see budget.py).
+
+    budget (kWh/day) = kwh_per_degree × max(0, heats_below - the day's mean outdoor temperature)
+
+    Rooms that get heat from below (the upper floors) start heating at a
+    colder day, so on mild days the budgets go to the lower floors.
+    """
+
+    heats_below: float = 15.0      # °C, daily mean outdoor temperature
+    kwh_per_degree: float = 0.4    # kWh per day for each °C below heats_below
+    night: bool = True             # may be charged from the grid by the night plan
+
+    def budget_kwh(self, temperature: float) -> float:
+        return self.kwh_per_degree * max(0.0, self.heats_below - temperature)
+
+
 class SolarParams(_Model):
     """Switching room (storage) heaters on PV surplus.
 
@@ -80,20 +97,25 @@ class SolarParams(_Model):
     legacy: add one heater above `export_on_w` export, remove one below
         `import_off_w`, as the legacy controller did.
     shadow: legacy, while logging what fit mode would do.
-    fit: see engine.py; only below `temp_limit` (today's mean outdoor
-        temperature), heaters that fit the surplus, never charging from the grid.
+    fit: see engine.py; heaters that fit the surplus, never charging from
+        the grid, each zone up to its daily heat budget (budget.py).
+
+    `priority` lists the room heaters switched on PV surplus. Legacy mode
+    switches them in this order; fit mode by budget, using the order only to
+    break ties. `zones` holds each one's budget settings; it keeps a removed
+    heater's settings, so they're back if it's added again.
     """
 
     enabled: bool = True
     mode: SolarMode = "legacy"
     priority: list[str] = Field(default_factory=lambda: list(LEGACY_SOLAR_PRIORITY))
+    zones: dict[str, Zone] = Field(default_factory=dict)
     export_on_w: float = 1500
     import_off_w: float = -200
     min_switch_interval_s: float = 120   # minimum time between switches of one heater
     stale_after_s: float = 120           # shed solar heaters if no grid reading this long
 
     # Fit mode
-    temp_limit: float = 15.0             # °C, today's mean outdoor temperature
     margin_w: float = 100                # export beyond a heater's power needed to switch it on
     fit_off_import_w: float = 200        # import tolerated before shedding a heater
     fast_shed_w: float = 1000            # import above which a heater is shed regardless of min_on_s
@@ -102,6 +124,9 @@ class SolarParams(_Model):
     settle_s: float = 60                 # one switch-on per settle_s, so its effect can be seen
     no_load_w: float = 300               # a switch-on that moves the grid less than this drew nothing
     no_load_skip_s: float = 3600         # skip such a heater (off by hand, or core full) this long
+    max_share: float = 1.0               # a zone stops at this share of its budget (1.2 = 120%)
+    rotate_after_s: float = 1800         # on this long, a heater may make way for a zone further behind
+    rotate_gap: float = 0.15             # if that zone's share of its budget is this much lower
 
     @field_validator("priority")
     @classmethod
@@ -112,6 +137,18 @@ class SolarParams(_Model):
         if len(set(v)) != len(v):
             raise ValueError("Duplicate heaters in priority list")
         return v
+
+    @model_validator(mode="after")
+    def _zone_for_each_heater(self) -> "SolarParams":
+        """Every heater in the priority list has budget settings (the defaults until edited)."""
+        for heater in self.priority:
+            if heater not in self.zones:
+                self.zones[heater] = Zone()
+        return self
+
+    def need_kwh(self, temperature: float) -> float:
+        """Heat for the whole day at this mean outdoor temperature: all zones' budgets together."""
+        return sum(self.zones[h].budget_kwh(temperature) for h in self.priority)
 
 
 WaterMode = Literal["always_on", "shadow", "pv"]
@@ -158,12 +195,14 @@ class NightParams(_Model):
     shadow: the plan is made every evening and shown, and what it would
         switch is logged, but nothing is switched.
     on: the plan's heaters are switched on from `charge_from`.
+
+    Which heaters may charge, and how much heat each zone needs, is set per
+    zone (solar.zones). `charge_from` also starts each budget day (budget.py).
     """
 
     mode: NightMode = "off"
     charge_from: time = time(20, 0)      # the low tariff starts at 20:00 every day
     charge_until: time = time(7, 0)      # and ends at 07:00 (on weekdays and Saturdays)
-    kwh_per_degree: float = 1.7          # heat per day for each °C tomorrow is colder than solar.temp_limit
     pv_credit: float = 0.2               # share of tomorrow's forecast PV surplus counted as heat
     min_kwh: float = 2.0                 # don't charge for less than this
 

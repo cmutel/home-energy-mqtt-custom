@@ -80,8 +80,7 @@ def main() -> None:
             if not days:
                 print("No days with day forecasts: run `dorfsteig-forecast backfill` first")
                 return
-            results = replay_night.run_all(days, config.solar.temp_limit, config.night.kwh_per_degree,
-                                           config.night.min_kwh)
+            results = replay_night.run_all(days, config.solar.need_kwh, config.night.min_kwh)
             print(replay_night.night_report(results, days))
         case "replay" if args.rooms:
             # Heaters that drew nothing in their last test (switched off by hand) are left out

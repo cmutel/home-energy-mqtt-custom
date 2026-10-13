@@ -27,8 +27,9 @@
     <div class="label"><span class="swatch" style="background: {{ colours.space }}"></span>
       Space ≤{{ "%.1f" | format(today.space_kwh) }} kWh ({{ "%.1f" | format(today.space_solar_kwh) }} from PV)</div>
     {{ spark.heating }}<div class="label">last {{ spark.hours }} h · water measured, space at most on-time × power</div>
-    <div class="label">Outside today {% if s.outdoor.mean is none %}unknown{% else %}{{ "%.1f" | format(s.outdoor.mean) }} °C{% endif %}
-      · room heaters: {{ s.outdoor.mode }}{% if s.outdoor.mode == "fit" %}, {{ "allowed" if s.outdoor.mean is not none and s.outdoor.mean < s.outdoor.limit else "not allowed" }} (limit {{ s.outdoor.limit }} °C){% endif %}</div>
+    <div class="label">Outside {% if s.outdoor.mean is none %}unknown{% else %}{{ "%.1f" | format(s.outdoor.mean) }} °C{% endif %}
+      (mean for the day) · room heaters: {{ s.outdoor.mode }}{% if s.budgets %}, zone budgets
+      {{ "%.1f" | format(s.budgets.values() | sum(attribute="delivered_kwh")) }} of {{ "%.1f" | format(s.budgets.values() | sum(attribute="budget_kwh")) }} kWh{% endif %}</div>
     {% if night.mode != "off" %}<div class="label">Night plan ({{ night.mode }}):
       {% if night.plan and night.tonight %}{% if night.plan.grid_kwh > 0 %}{{ "%.1f" | format(night.plan.grid_kwh) }} kWh tonight, {{ night.plan.start | ts("%H:%M") }}–{{ night.plan.end | ts("%H:%M") }}{% else %}no charging tonight{% endif %}
       {% elif night.plan %}last night {{ "%.1f" | format(night.plan.grid_kwh) }} kWh; tonight's plan at {{ night.charge_from.strftime("%H:%M") }}

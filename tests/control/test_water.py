@@ -141,7 +141,7 @@ def test_shadow_mode_logs_without_switching(tmp_path: Path):
     controller = Controller(Store(init_db(tmp_path / "t.sqlite")), notifier=Notifier(enabled=False))
     cfg = config()
     cfg.water.mode = "shadow"
-    controller.save_config(cfg)
+    controller.store.save_config(cfg, source="test")   # Controller.save_config would tick at the real time
     controller.water_full = full_at(NOON)
     controller.on_grid_power(-1000)
     controller.grid_ts = NOON.timestamp()

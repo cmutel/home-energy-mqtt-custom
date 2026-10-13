@@ -23,17 +23,25 @@ aside, other rules still apply; between steps 1 and 2 the water step switches
 them on PV surplus, backup and safety. Room heaters then only get surplus
 once every water heater is on, and are shed first.
 
-Fit mode for room heaters (`solar.mode == "fit"`) replaces step 2:
-- only if today's mean outdoor temperature is below `temp_limit`; otherwise
-  (or if it's unknown) PV room heaters are switched off;
+Fit mode for room heaters (`solar.mode == "fit"`) replaces step 2. Each zone
+(heater) has a daily heat budget and the kWh delivered so far (budget.py):
+- without a temperature for the day there are no budgets, and PV room
+  heaters are switched off;
+- a heater whose zone has reached `max_share` of its budget (or has no
+  budget today, e.g. on a mild day) is switched off;
 - import beyond `fast_shed_w`, or beyond `fit_off_import_w` once on for
-  `min_on_s`: switch off the lowest-priority PV heater;
+  `min_on_s`: switch off the PV heater whose zone is furthest ahead;
 - otherwise, once the last switch has settled and the water heaters are
-  served, switch on the highest-priority heater that's off, not skipped and
-  fits the smoothed export minus `margin_w` (a smaller one further down may
-  fill a gap a bigger one doesn't fit). One per `settle_s`, so the
-  controller can see whether it draws (see service.check_room_loads); one
-  that doesn't is skipped for `no_load_skip_s` and switched off here.
+  served, switch on the heater whose zone is furthest behind (smallest
+  share of its budget delivered) among those that fit the smoothed export
+  minus `margin_w`. Ties go by the order of `solar.priority`. One per
+  `settle_s`, so the controller can see whether it draws (see
+  service.check_room_loads); one that doesn't is skipped for
+  `no_load_skip_s` and switched off here;
+- if nothing more fits: a heater on for `rotate_after_s` makes way for a
+  zone at least `rotate_gap` further behind, if that zone's heater fits in
+  the power it frees. So the heat goes round the zones during the day
+  instead of one zone taking a whole afternoon.
 
 Night plan (see night.py): heaters in the plan are on during their
 window (reason "night plan") and switched off when it ends ("night plan
@@ -50,6 +58,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
+from dorfsteig_control.budget import Budget
 from dorfsteig_control.config import AlwaysOn, ControlConfig
 from dorfsteig_control.heaters import HEATERS
 from dorfsteig_control.schedule import scheduled_heaters
@@ -97,13 +106,15 @@ def decide(
     overrides: Mapping[str, bool] | None = None,
     hold_solar: bool = False,
     water_full: Mapping[str, float] | None = None,
-    outdoor_mean: float | None = None,
+    budgets: Mapping[str, Budget] | None = None,
     watts: Mapping[str, float] | None = None,
     room_skip: Mapping[str, float] | None = None,
     night_windows: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[States, list[Event]]:
     """New heater states and the switches that lead to them; see the module docstring.
 
+    `budgets`: zone budgets for fit mode (budget.zone_budgets); None if the
+    day's temperature is unknown.
     `night_windows`: heater → (on from, off at) Unix times, from the night
     plan; None or empty when the plan isn't live.
     """
@@ -202,7 +213,7 @@ def decide(
     elif grid.power is None or hold_solar:
         pass
     elif solar.mode == "fit":
-        fit_rooms(new, solar, ts, grid, solar_on, water_ready, outdoor_mean, watts or {}, room_skip or {},
+        fit_rooms(new, solar, ts, grid, solar_on, water_ready, budgets, watts or {}, room_skip or {},
                   overrides, switch)
     elif grid.power > solar.export_on_w and water_ready:
         for heater in solar.priority:
@@ -220,33 +231,60 @@ def decide(
 
 
 def fit_rooms(new: States, solar, ts: float, grid: GridSample, solar_on: list[str], water_ready: bool,
-              outdoor_mean: float | None, watts: Mapping[str, float], room_skip: Mapping[str, float],
-              overrides: Mapping[str, bool], switch) -> None:
+              budgets: Mapping[str, Budget] | None, watts: Mapping[str, float],
+              room_skip: Mapping[str, float], overrides: Mapping[str, bool], switch) -> None:
     """Fit mode for room heaters; see the module docstring."""
-    if outdoor_mean is None or outdoor_mean >= solar.temp_limit:
-        why = "no temperature" if outdoor_mean is None else "too warm"
+    if budgets is None:
         for heater in solar_on:
-            switch(heater, False, None, why)
+            switch(heater, False, None, "no temperature")
         return
+
+    def share(heater: str) -> float:
+        return budgets[heater].share
+
+    def power(heater: str) -> float:
+        return watts.get(heater, 2000.0)
+
+    # Zones that have had enough today, and heaters that drew nothing when switched on
     for heater in solar_on:
-        if room_skip.get(heater, 0) > ts:
+        if budgets[heater].done(solar.max_share):
+            switch(heater, False, None, "budget reached" if budgets[heater].budget_kwh > 0 else "no budget")
+        elif room_skip.get(heater, 0) > ts:
             switch(heater, False, None, "no load")
     solar_on = [h for h in solar_on if new[h].on]
+
+    # Importing: shed the zone furthest ahead
     g = grid.average if grid.average is not None else grid.power
     if g < -solar.fit_off_import_w:
-        for heater in reversed(solar_on):
+        for heater in sorted(solar_on, key=share, reverse=True):
             if g < -solar.fast_shed_w or ts - new[heater].since >= solar.min_on_s:
                 switch(heater, False, None, "import")
                 break
         return
+
     last = max((new[h].since for h in solar.priority), default=0.0)
     if not water_ready or ts - last < solar.settle_s:
         return
-    for heater in solar.priority:
-        state = new[heater]
-        if (heater in overrides or state.on or room_skip.get(heater, 0) > ts
-                or ts - state.since < solar.min_off_s):
-            continue
-        if watts.get(heater, 2000.0) <= g - solar.margin_w:
+
+    # Zones waiting for heat, furthest behind first (sorted() keeps the priority order for ties)
+    waiting = [h for h in solar.priority
+               if h not in overrides and not new[h].on and room_skip.get(h, 0) <= ts
+               and ts - new[h].since >= solar.min_off_s and not budgets[h].done(solar.max_share)]
+    waiting.sort(key=share)
+
+    for heater in waiting:
+        if power(heater) <= g - solar.margin_w:
             switch(heater, True, "solar", "export")
+            return
+
+    # Nothing more fits: the heater furthest ahead may make way for a zone further behind
+    ready = [h for h in solar_on if ts - new[h].since >= solar.rotate_after_s]
+    if not ready:
+        return
+    ahead = max(ready, key=share)
+    for heater in waiting:
+        if (share(ahead) - share(heater) >= solar.rotate_gap
+                and power(heater) <= g + power(ahead) - solar.margin_w):
+            switch(ahead, False, None, "rotate")
+            switch(heater, True, "solar", "rotate")
             return

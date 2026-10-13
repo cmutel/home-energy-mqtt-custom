@@ -104,7 +104,7 @@ by `pv_forecast.model`.
 
 The controller reads these tables for the status page, the morning report
 and the night plan (`dorfsteig_control/night.py`): on cold days, the storage
-heaters charge from the grid overnight for tomorrow's heat need minus part
+heaters charge from the grid overnight for tomorrow's zone budgets minus part
 of tomorrow's forecast PV.
 
 ## Energy, upstairs and costs
@@ -152,7 +152,7 @@ One process (`dorfsteig-control run`) reads MBMD from MQTT, decides every
 | `/heating/api/status` | Everything on the status page as JSON |
 | `/heating/api/live` | Every live value, for the real-time dashboard (`live.py`) |
 
-Config (schedule rules, PV settings and priority, notification times) is
+Config (schedule rules, PV settings and zones, notification times) is
 stored in SQLite and edited in the web UI; every version is kept. The control
 logic is a pure function in `engine.py`; its docstring describes the rules.
 Each new behaviour has a shadow mode that only logs what it would do (History
@@ -161,8 +161,16 @@ page, "dry run"), set on the Solar page:
 | Setting | Modes | Module |
 |---|---|---|
 | Water heaters | always on / shadow / pv (PV first, with backup and safety) | `water.py` |
-| Room heaters on PV | legacy / shadow / fit (fit to the surplus below a temperature limit) | `engine.py` |
+| Room heaters on PV | legacy / shadow / fit (fit to the surplus, shared by zone budget) | `engine.py`, `budget.py` |
 | Night plan | off / shadow / on (grid charging before cold days) | `night.py` |
+
+Room heaters are zones with a daily heat budget from the day's mean outdoor
+temperature: kWh per °C below a "heats below" temperature, set per zone on
+the Solar page (upper floors start heating on colder days). Fit mode gives
+the PV surplus to the zone furthest behind its budget, and rotates heaters
+so the heat goes round the zones; the night plan charges each zone that may
+charge at night for its own budget. All tuning values are on the Solar page
+under "More settings".
 
 Pushover sends alerts (grid data, boards, sensors offline, wattage drift),
 the evening summary and the 06:00 morning report (`report.py`).

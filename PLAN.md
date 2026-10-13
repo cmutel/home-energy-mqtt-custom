@@ -208,7 +208,16 @@ less (54 vs 69 kWh on the 83 days with water data).
 
 - [x] Fit mode in `engine.fit_rooms`, modes legacy / shadow / fit on the
       Solar page; temperature limit 15 °C on today's mean (station + ICON-CH2).
+- [x] Zone budgets instead of the priority order (2026-10-13, `budget.py`):
+      each zone gets kWh per °C below its own "heats below" temperature,
+      from the day's mean (station so far + forecast, updated through the
+      day; days run 20:00-20:00). Fit mode serves the zone furthest behind
+      its budget, stops a zone at its budget, and rotates a heater on for
+      30 min to a zone 15 points further behind. Zones and all tuning
+      values are editable on the Solar page.
 - [ ] Shadow for a few sunny days, then fit.
+
+Original notes (the temperature limit is now per zone):
 
 - Only when it's cold enough to want heat: outdoor temperature (daily mean
   or forecast) below a heating limit, ~15 °C, to be tuned.
@@ -276,6 +285,9 @@ weather forecast. Gradient boosting isn't worth the extra dependencies.
       kwh_per_degree × (temp_limit - tomorrow's forecast mean), minus
       pv_credit × tomorrow's forecast PV surplus; the rest from the grid,
       all available heaters from 20:00 (low tariff), never past 07:00.
+- [x] Per zone (2026-10-13): tomorrow's zone budgets, minus the PV credit
+      shared by budget; each zone ticked for night charging runs for its
+      own kWh. Off = PV only (a colder house on grey days).
 - [x] Modes off / shadow / on on the Solar page; plan stored in
       `night_plan`, shown on the status and Solar pages and in the morning
       report.
@@ -316,7 +328,8 @@ Paused 2026-10-12. Open, roughly in order:
   since the backup), replay until never cold, then pv mode.
 - Storage heaters: shadow on sunny days, then fit; night plan in shadow when
   the first cold days come.
-- Tune from the shadow logs: temperature limit, kwh_per_degree, pv_credit.
+- Set the zones (heats below, kWh per °C) and tune from the shadow logs,
+  with pv_credit.
 - Kitchen PM sensor: reads a flat 200-800 µg/m³ since 2026-05-12 (and
   2025-05 to 07), while the balcony reads ~1: clean or replace it. An alert
   for implausible readings would catch this earlier.

@@ -5,8 +5,8 @@ latest forecast issued so far (ICON-CH2, then ICON-CH1, then Open-Meteo's
 best_match; see dorfsteig_core.weather). Both tables are filled by
 `dorfsteig-ingest weather`.
 
-Used for today (fit mode's temperature limit) and for tomorrow (the night
-plan, see night.py), which is then forecast only.
+Used for the zone budgets (budget.py) of the current budget day and of
+tomorrow (the night plan, see night.py), which is then forecast only.
 """
 
 import sqlite3

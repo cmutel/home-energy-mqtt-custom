@@ -6,9 +6,12 @@ heated by switching heaters on by hand. The night plan does this instead.
 Once a day, at `night.charge_from` (20:00, when the low tariff starts), it
 works out how much heat tomorrow needs and how much of that PV will bring:
 
-    need     = kwh_per_degree × max(0, solar.temp_limit - tomorrow's mean temperature)
-    from PV  = pv_credit × tomorrow's forecast PV surplus
-    grid     = need - from PV, or nothing if that's less than min_kwh
+    need     = the zones' budgets for tomorrow's mean temperature (budget.py)
+    from PV  = pv_credit × tomorrow's forecast PV surplus, shared by the zones
+               in proportion to their budgets
+    grid     = for each zone that may charge at night (Zone.night):
+               its budget - its share of the PV; nothing at all if the
+               zones together need less than min_kwh
 
 - Tomorrow's mean temperature: forecast (outdoor.day_mean).
 - PV surplus: the forecast PV beyond the usual house load, from the
@@ -20,11 +23,14 @@ works out how much heat tomorrow needs and how much of that PV will bring:
   forecast surplus on heating days, hence the default 0.2 (see
   replay_night.py, `dorfsteig-control replay --night`).
 
-The grid share is split over the room heaters in `solar.priority` that draw
-power (the latest wattage test didn't find them switched off by hand). All
-of them charge at the same time, for grid kWh / (their total watts) hours
-from charge_from (or from when the plan was made, if later), and never past
-charge_until.
+Only heaters that draw power charge (the latest wattage test didn't find
+them switched off by hand). They all start at charge_from (or when the plan
+was made, if later), each for its zone's grid kWh / its watts, and never past
+charge_until. What a heater charges counts towards its zone's budget for
+tomorrow, so on a sunny day PV then only tops up.
+
+With night.mode "off" no plan is made: the house is heated from PV only, and
+gets colder on grey days.
 
 Why charge for tomorrow, and why early in the night: a storage heater gives
 off its heat over the following day. Charged early, its core is emptier by
@@ -37,11 +43,12 @@ restarts and shows on the status and Solar pages.
 
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from dorfsteig_control import forecasts, outdoor
 from dorfsteig_control.config import ControlConfig, NightParams
+from dorfsteig_control.heaters import BY_ID
 
 
 @dataclass
@@ -54,13 +61,14 @@ class NightPlan:
     surplus_kwh: float | None    # tomorrow's forecast PV surplus; None without a forecast
     grid_kwh: float
     heaters: list[str]
-    start: float                 # Unix time; all heaters charge from start to end
-    end: float
+    start: float                 # Unix time; all heaters start charging then
+    end: float                   # when the last one stops
     note: str                    # how the numbers came about, for people
+    ends: dict[str, float] = field(default_factory=dict)   # heater → when it stops; `end` if missing
 
     def windows(self) -> dict[str, tuple[float, float]]:
         """Heater → (on from, off at), for engine.decide."""
-        return {heater: (self.start, self.end) for heater in self.heaters}
+        return {heater: (self.start, self.ends.get(heater, self.end)) for heater in self.heaters}
 
 
 def night_of(now: datetime, params: NightParams) -> date | None:
@@ -93,13 +101,14 @@ def make_plan(conn: sqlite3.Connection, config: ControlConfig, now: datetime,
         plan.note = f"No temperature forecast for tomorrow ({source}): no charging"
         return plan
     plan.temperature = temperature
-    limit = config.solar.temp_limit
+    solar = config.solar
+    budgets = {h: solar.zones[h].budget_kwh(temperature) for h in solar.priority}
+    plan.need_kwh = sum(budgets.values())
     note = f"Tomorrow {temperature:.1f} °C ({source})"
-    plan.need_kwh = params.kwh_per_degree * max(0.0, limit - temperature)
     if plan.need_kwh == 0:
-        plan.note = f"{note}, not below {limit:.0f} °C: no heating needed"
+        plan.note = f"{note}: no zone needs heat"
         return plan
-    note += f": needs {plan.need_kwh:.1f} kWh"
+    note += f": zones need {plan.need_kwh:.1f} kWh"
 
     forecast = forecasts.day_forecast(conn, tomorrow, now)
     if forecast is None:
@@ -107,30 +116,33 @@ def make_plan(conn: sqlite3.Connection, config: ControlConfig, now: datetime,
         note += ", no PV forecast"
     else:
         plan.surplus_kwh = forecast.surplus_kwh
-        from_pv = params.pv_credit * forecast.surplus_kwh
+        from_pv = min(plan.need_kwh, params.pv_credit * forecast.surplus_kwh)
         note += f", PV surplus {forecast.surplus_kwh:.1f} kWh × {params.pv_credit:.1f} = {from_pv:.1f} kWh"
 
-    grid = max(0.0, plan.need_kwh - from_pv)
-    if grid < params.min_kwh:
-        plan.note = f"{note}; grid {grid:.1f} kWh: not worth charging"
+    # Each zone that may charge at night: its budget minus its share of the PV
+    heaters = [h for h in solar.priority if solar.zones[h].night and h not in no_load and budgets[h] > 0]
+    if not heaters:
+        plan.note = f"{note}; no zone that needs heat may charge at night"
+        return plan
+    grid = {h: budgets[h] * (1 - from_pv / plan.need_kwh) for h in heaters}
+    if sum(grid.values()) < params.min_kwh:
+        plan.note = f"{note}; grid {sum(grid.values()):.1f} kWh: not worth charging"
         return plan
 
-    heaters = [h for h in config.solar.priority if h not in no_load]
-    total_w = sum(watts.get(h, 2000.0) for h in heaters)
-    if total_w == 0:
-        plan.note = f"{note}; no heaters available"
-        return plan
-
-    hours = grid * 1000 / total_w
-    end = start + hours * 3600
-    capped = ""
-    if end > latest_end:
-        end = latest_end
-        hours = (end - start) / 3600
-        grid = hours * total_w / 1000
-        capped = f" (all there's time for until {params.charge_until:%H:%M})"
+    capped = []
+    for heater in heaters:
+        w = watts.get(heater, 2000.0)
+        end = start + grid[heater] * 1000 / w * 3600
+        if end > latest_end:
+            end = latest_end
+            grid[heater] = (end - start) / 3600 * w / 1000
+            capped.append(heater)
+        plan.ends[heater] = end
     plan.heaters = heaters
-    plan.end = end
-    plan.grid_kwh = grid
-    plan.note = f"{note}; grid {grid:.1f} kWh = {hours:.1f} h on {len(heaters)} heaters{capped}"
+    plan.end = max(plan.ends.values())
+    plan.grid_kwh = sum(grid.values())
+    hours = ", ".join(f"{BY_ID[h].name} {(plan.ends[h] - start) / 3600:.1f} h" for h in heaters)
+    plan.note = f"{note}; grid {plan.grid_kwh:.1f} kWh: {hours}"
+    if capped:
+        plan.note += f" (all there's time for until {params.charge_until:%H:%M})"
     return plan

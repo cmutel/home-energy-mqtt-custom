@@ -76,6 +76,32 @@ def test_solar_settings_and_priority(setup):
     assert controller.config.solar.priority[-1] == "upstairs_beta"
 
 
+def test_zone_settings(setup):
+    controller, client = setup
+    priority = controller.config.solar.priority
+    data = {f"heats_below.{h}": "15" for h in priority} | {f"kwh_per_degree.{h}": "0.5" for h in priority}
+    data |= {"heats_below.upstairs_guest": "11", "kwh_per_degree.upstairs_guest": "0.35"}
+    data |= {f"night.{h}": "on" for h in priority if h != "upstairs_guest"}
+    r = client.post("/heating/solar/zones", data=data)
+    assert "msg=" in r.headers["location"]
+    guest = controller.config.solar.zones["upstairs_guest"]
+    assert (guest.heats_below, guest.kwh_per_degree, guest.night) == (11, 0.35, False)
+    assert controller.config.solar.zones["living_room"].night
+    assert client.get("/heating/solar").status_code == 200
+
+
+def test_more_settings(setup):
+    controller, client = setup
+    from dorfsteig_control.web import SETTINGS
+    data = {name: str(getattr(controller.config.solar, name)) for name, _ in SETTINGS["solar"]}
+    data["rotate_after_s"] = "2400"
+    client.post("/heating/solar/settings/solar", data=data)
+    assert controller.config.solar.rotate_after_s == 2400
+    data["margin_w"] = "lots"
+    r = client.post("/heating/solar/settings/solar", data=data)
+    assert "error=" in r.headers["location"]
+
+
 def test_notification_settings(setup):
     controller, client = setup
     client.post("/heating/notifications", data={"daily_summary_at": "20:30", "midday_status_at": "",

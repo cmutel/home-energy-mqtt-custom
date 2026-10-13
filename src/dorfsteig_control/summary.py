@@ -86,7 +86,7 @@ class DaySummary:
 
 
 def _bucket(reason: str) -> str:
-    if reason in ("export", "water pv"):
+    if reason in ("export", "rotate", "water pv"):
         return "solar"
     if reason in ("schedule", "water backup", "water safety", "night plan"):
         return "scheduled"
@@ -145,6 +145,18 @@ def measured_kwh(conn: sqlite3.Connection, heater: str,
             wh = None
         totals[bucket] += (wh or 0) / 1000
     return totals
+
+
+def delivered_kwh(conn: sqlite3.Connection, heaters: list[str], start: float, end: float,
+                  watts: dict[str, float], dry_run: bool) -> dict[str, float]:
+    """kWh each storage heater got between start and end, whatever switched it on: on-time × watts.
+
+    For the zone budgets (budget.py). `dry_run` picks the real switches or the
+    shadow's (see service.run_shadow).
+    """
+    spans = on_spans(conn, start, end, dry_run)
+    return {heater: sum(e - s for s, e, _ in spans.get(heater, [])) / 3600 * watts.get(heater, 0.0) / 1000
+            for heater in heaters}
 
 
 def energy(conn: sqlite3.Connection, start: float, end: float) -> tuple[float | None, ...]:
