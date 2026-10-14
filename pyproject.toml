@@ -34,6 +34,7 @@ ml = [
 dorfsteig-ingest = "dorfsteig_ingest.cli:main"
 dorfsteig-control = "dorfsteig_control.cli:main"
 dorfsteig-forecast = "dorfsteig_forecast.cli:main"
+dorfsteig-mbmd-watchdog = "dorfsteig_control.mbmd_watchdog:main"
 
 [dependency-groups]
 dev = [

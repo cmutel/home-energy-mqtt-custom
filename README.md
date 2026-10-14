@@ -212,6 +212,15 @@ sudo systemctl enable --now dorfsteig-datasette
 journalctl -u dorfsteig-ingest@power -f
 ```
 
+MBMD watchdog (stops `mbmd` while the inverter's Modbus server is unreachable,
+then retries after 5, 10, 20, 40, 60 min; never starts an `mbmd` you stopped by hand):
+
+```bash
+sudo cp deploy/systemd/dorfsteig-mbmd-watchdog.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now dorfsteig-mbmd-watchdog
+journalctl -u dorfsteig-mbmd-watchdog -f
+```
+
 Controller cutover (replaces supervisor's `control_heating` and `warn_mbmd_down`):
 
 ```bash
