@@ -3,7 +3,8 @@
 - MQTT: record grid power (and PV power for the status page), and keep the
   newest value of every MBMD topic for the real-time page (live.py)
 - control loop: every `tick_s`, run `engine.decide` and persist the result
-- monitor: alerts, scheduled Pushover messages, passive wattage estimates
+- monitor: alerts (incl. the dishwasher heater, dishwasher.py), scheduled
+  Pushover messages, passive wattage estimates
 - web: ESP32 JSON files, legacy status.json, /api/status and the UI (web.py)
 
 In dry-run mode heater state isn't persisted, events are flagged dry_run,
@@ -23,7 +24,7 @@ from pathlib import Path
 import aiomqtt
 import uvicorn
 
-from dorfsteig_control import outdoor, water, wattage
+from dorfsteig_control import dishwasher, outdoor, water, wattage
 from dorfsteig_control.budget import Budget, budget_day, day_start, zone_budgets
 from dorfsteig_control.config import ControlConfig, from_legacy
 from dorfsteig_control.engine import GridSample, States, decide
@@ -44,6 +45,7 @@ PV_POWER_TOPIC = "mbmd/solaredge1-1/Power"
 TICK_S = 20            # legacy controller acted on every 11th ~2 s reading
 STALE_TICKS = 3        # serve 503 to the boards if the loop stops for this many ticks
 MONITOR_S = 15
+DISHWASHER_CHECK_S = 300   # the IoTaWatt readings arrive every 5 minutes
 BOARDS = ("upstairs", "downstairs")
 
 
@@ -109,6 +111,11 @@ class Controller:
         self.shadow_budgets: dict[str, Budget] | None = None   # what the shadow's switches delivered
         self.room_skip: dict[str, float] = {}       # heater → skip until (drew nothing when switched on)
         self.load_checks: list[wattage.PendingSwitch] = []
+
+        # Dishwasher heater watch (dishwasher.py): when we last looked, and the
+        # start of the last run checked
+        self.dishwasher_checked = 0.0
+        self.dishwasher_run: float | None = None
 
         # Night plan (night.py): the latest one made
         self.night_plan: NightPlan | None = store.load_night_plan()
@@ -362,6 +369,13 @@ class Controller:
             elif self.notifier.clear(key):
                 await self.notifier.send(f"Sensor {room} back", "Readings are arriving again.")
 
+        if ts - self.dishwasher_checked >= DISHWASHER_CHECK_S:
+            self.dishwasher_checked = ts
+            try:
+                await self.check_dishwasher(ts)
+            except Exception:
+                log.exception("Dishwasher check failed")
+
         await self.process_passive(ts)
         self.check_room_loads(ts)
         try:
@@ -378,6 +392,18 @@ class Controller:
             if ts - datetime.combine(now.date(), at).timestamp() > 3600:
                 continue   # started long after the scheduled time; skip until tomorrow
             await self.send_scheduled(kind, now)
+
+    async def check_dishwasher(self, ts: float) -> None:
+        """Alert on the newest finished dishwasher run, once per run."""
+        run, alerts = dishwasher.check_latest(self.store.conn, ts, self.dishwasher_run)
+        if run == self.dishwasher_run:
+            return   # no new finished run
+        self.dishwasher_run = run
+        for alert in alerts:
+            await self.notifier.alert(alert.key, alert.title, alert.message, alert.repeat_s)
+        # A run without a fault ends that alert, so the next occurrence is sent at once
+        for key in dishwasher.ALERT_KEYS - {a.key for a in alerts}:
+            self.notifier.clear(key)
 
     def sensor_last_seen(self, room: str) -> float | None:
         try:

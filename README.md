@@ -172,8 +172,12 @@ so the heat goes round the zones; the night plan charges each zone that may
 charge at night for its own budget. All tuning values are on the Solar page
 under "More settings".
 
-Pushover sends alerts (grid data, boards, sensors offline, wattage drift),
-the evening summary and the 06:00 morning report (`report.py`).
+Pushover sends alerts (grid data, boards, sensors offline, wattage drift,
+dishwasher heater), the evening summary and the 06:00 morning report
+(`report.py`). The dishwasher check (`dishwasher.py`) looks at every finished
+program on the IoTaWatt channel: a run without one of its heating phases, a
+heater flickering inside a heating block, or the last 7 runs' median energy
+more than 15% off the same time of year in other years.
 
 ```bash
 uv run dorfsteig-control import-legacy-config ~/config.json   # once, from write_config.py output
