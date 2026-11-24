@@ -122,6 +122,26 @@ def test_find_runs_across_missing_readings(tmp_path: Path):
     assert dw.finished(conn, runs[0])
 
 
+def test_old_run_not_rechecked_after_later_activity(tmp_path: Path):
+    # 23 Nov 2026: a normal program at 21:57, then a short 17-minute blip at
+    # 06:30. The program must be checked once, after it ends, and never again
+    # as a truncated run with its main wash cut off.
+    conn = init_db(tmp_path / "t.sqlite")
+    start = datetime(2026, 11, 23, 21, 57)
+    idle(conn, start - timedelta(hours=1), 60)
+    insert(conn, start, NORMAL)
+    end = start + timedelta(minutes=len(NORMAL))
+    idle(conn, end, 12 * 60)
+    insert(conn, datetime(2026, 11, 24, 6, 30), [130.0, 250.0] * 8 + [60.0])
+
+    checked, alerts = dw.check_latest(conn, (end + timedelta(minutes=25)).timestamp(), None)
+    assert checked == start.timestamp() and alerts == []
+    t = datetime(2026, 11, 24, 8, 0)
+    while t < datetime(2026, 11, 24, 10, 0):
+        assert dw.check_latest(conn, t.timestamp(), checked) == (checked, [])
+        t += timedelta(minutes=1)
+
+
 def test_controller_alerts_once_per_run(tmp_path: Path):
     class FakeNotifier(Notifier):
         def __init__(self):

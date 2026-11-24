@@ -68,6 +68,7 @@ OTHER_YEAR_DAYS = 200         # runs at least this far apart are from another ye
 MIN_SEASON_RUNS = 10          # fewer than this: no seasonal normal
 
 CHECK_WITHIN_S = 6 * 3600     # only check runs that ended this recently (e.g. after a restart)
+LONGEST_RUN_S = 5 * 3600      # look back this much further for the start of a run (the longest seen: 257 min)
 
 
 @dataclass(frozen=True)
@@ -277,9 +278,22 @@ def check_latest(
     if newest is None or now - newest[0] > CHECK_WITHIN_S:
         return last_checked, []
 
-    # Runs of the last few hours: is the newest one finished and new?
-    recent = find_runs(conn, since=now - CHECK_WITHIN_S - FULL_PROGRAM_MIN * 60 * 3)
-    recent = [r for r in recent if finished(conn, r)]
+    # Finished runs that ended in the last few hours: is the newest one new?
+    #
+    # The run itself must have ended recently, not just any activity on the
+    # channel. On 24 Nov 2026 a short 06:30 blip passed the check above, and
+    # the lookback window then cut the previous night's program: from 08:58
+    # it began part-way through the run (later each minute), so each check
+    # saw a "new" run, and once the main wash fell outside the window the
+    # remainder looked like a run with a heating phase missing.
+    #
+    # A run starting less than RUN_GAP_S after `since` may have started
+    # before it, and is skipped: its energy would be too low.
+    since = now - CHECK_WITHIN_S - LONGEST_RUN_S
+    recent = [
+        r for r in find_runs(conn, since=since)
+        if finished(conn, r) and now - r.end <= CHECK_WITHIN_S and r.start - since >= RUN_GAP_S
+    ]
     if not recent or recent[-1].start == last_checked:
         return last_checked, []
     run = recent[-1]
